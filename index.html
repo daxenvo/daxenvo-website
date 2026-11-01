@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Daxenvo aide les entreprises à mieux gérer leurs demandes de devis, qualifier leurs prospects et assurer leur suivi commercial.">
+  <title>Daxenvo AI — Transformez vos demandes en clients</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: Arial, Helvetica, sans-serif;
+      background: #080d18;
+      color: #f5f7fb;
+      line-height: 1.6;
+    }
+
+    a { color: inherit; text-decoration: none; }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 26px 8%;
+      border-bottom: 1px solid #1d293c;
+    }
+
+    .logo { font-size: 25px; font-weight: 800; letter-spacing: -1px; }
+    .logo span { color: #64a5ff; }
+
+    nav { display: flex; gap: 30px; align-items: center; color: #c1cad9; font-size: 14px; }
+
+    .button {
+      display: inline-block;
+      background: #347ff0;
+      color: white;
+      padding: 13px 22px;
+      border-radius: 7px;
+      font-weight: 700;
+    }
+
+    .hero {
+      max-width: 1100px;
+      margin: auto;
+      padding: 110px 25px 100px;
+      text-align: center;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      color: #80b5ff;
+      background: #142642;
+      border: 1px solid #25456f;
+      padding: 7px 14px;
+      border-radius: 30px;
+      font-size: 13px;
+      margin-bottom: 28px;
+    }
+
+    h1 {
+      font-size: clamp(38px, 6vw, 66px);
+      line-height: 1.12;
+      letter-spacing: -2.5px;
+      max-width: 900px;
+      margin: 0 auto 25px;
+    }
+
+    h1 span { color: #64a5ff; }
+
+    .hero p {
+      color: #aab6c9;
+      font-size: 18px;
+      max-width: 690px;
+      margin: 0 auto 35px;
+    }
+
+    .note { display: block; margin-top: 17px; color: #8190a6; font-size: 12px; }
+
+    section { padding: 75px 8%; }
+
+    .section-title { text-align: center; font-size: 34px; margin-bottom: 15px; }
+    .section-text { text-align: center; color: #aab6c9; max-width: 650px; margin: 0 auto 45px; }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 22px;
+      max-width: 1100px;
+      margin: auto;
+    }
+
+    .card {
+      background: #101a2b;
+      border: 1px solid #24344d;
+      border-radius: 12px;
+      padding: 28px;
+    }
+
+    .card h3 { font-size: 19px; margin-bottom: 12px; }
+    .card p { color: #aab6c9; font-size: 14px; }
+
+    .contact {
+      text-align: center;
+      background: #101a2b;
+      border-top: 1px solid #24344d;
+      border-bottom: 1px solid #24344d;
+    }
+
+    .contact p { color: #aab6c9; margin: 15px auto 28px; max-width: 600px; }
+
+    footer {
+      padding: 28px 8%;
+      display: flex;
+      justify-content: space-between;
+      color: #8190a6;
+      font-size: 13px;
+    }
+
+    @media (max-width: 700px) {
+      header { padding: 20px 6%; }
+      nav a:not(.button) { display: none; }
+      .hero { padding: 80px 22px; }
+      .cards { grid-template-columns: 1fr; }
+      section { padding: 60px 7%; }
+      footer { flex-direction: column; gap: 10px; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <a href="#" class="logo">DAXENVO<span>.</span></a>
+    <nav>
+      <a href="#solution">La solution</a>
+      <a href="#contact" class="button">Demander une démonstration</a>
+    </nav>
+  </header>
+
+  <main>
+    <div class="hero">
+      <span class="eyebrow">DAXENVO AI · Gestion commerciale intelligente</span>
+      <h1>Transformez davantage de demandes de devis <span>en clients.</span></h1>
+      <p>
+        Daxenvo développe une solution destinée aux entreprises qui souhaitent
+        mieux traiter leurs demandes, qualifier leurs prospects et améliorer
+        leur suivi commercial.
+      </p>
+      <a href="#contact" class="button">Découvrir la solution</a>
+      <span class="note">Une solution en cours de développement.</span>
+    </div>
+
+    <section id="solution">
+      <h2 class="section-title">Ne laissez plus vos opportunités sans suivi.</h2>
+      <p class="section-text">
+        Une demande sans réponse rapide ou un prospect oublié peut devenir
+        une opportunité commerciale perdue.
+      </p>
+
+      <div class="cards">
+        <article class="card">
+          <h3>01 — Centraliser</h3>
+          <p>Organiser les demandes entrantes pour mieux suivre chaque opportunité commerciale.</p>
+        </article>
+        <article class="card">
+          <h3>02 — Qualifier</h3>
+          <p>Identifier les besoins et les informations essentielles avant le traitement d'un devis.</p>
+        </article>
+        <article class="card">
+          <h3>03 — Relancer</h3>
+          <p>Structurer le suivi des prospects afin de réduire les demandes laissées sans réponse.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="contact" id="contact">
+      <h2 class="section-title">Préparons une meilleure gestion de vos demandes.</h2>
+      <p>
+        Vous souhaitez découvrir le projet Daxenvo AI ou participer à ses
+        premières phases de lancement ?
+      </p>
+      <a href="mailto:daxenvo@gmail.com?subject=Demande%20de%20renseignements%20Daxenvo"
+         class="button">Nous contacter</a>
+    </section>
+  </main>
+
+  <footer>
+    <span>© 2026 Daxenvo. Tous droits réservés.</span>
+    <span>Daxenvo AI — En développement</span>
+  </footer>
+
+</body>
+</html>
