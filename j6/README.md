@@ -2,9 +2,9 @@
 
 ## Statut réel
 
-Le moteur `qualification.mjs` reste un **moteur de règles locales**, inchangé : ce n'est pas une IA. Une interface serveur Node.js permet désormais de lui adjoindre un fournisseur IA. Aucun modèle réel, SDK, client HTTP, clé API, dépendance supplémentaire ou appel payant n'est inclus. Les tests utilisent uniquement des données et réponses fictives.
+Le moteur `qualification.mjs` reste un **moteur de règles locales**, inchangé : ce n'est pas une IA. Une interface serveur Node.js permet désormais de lui adjoindre un fournisseur IA. Un adaptateur HTTP OpenAI Responses est disponible, désactivé par défaut. Aucun modèle réel n'a été contacté ; aucun SDK, secret ni dépendance supplémentaire n'est inclus. Les tests utilisent uniquement des données et réponses fictives.
 
-Ce dossier n'est relié ni à `index.html`, ni à Cloudflare, Tally, Make, Google Sheets ou à la démonstration Sites. Aucun envoi ni stockage n'est effectué. Le module serveur est une fonction à importer dans un futur backend, **pas une route HTTP ni un SaaS multiclient opérationnel**. Node.js 22 ou plus récent est recommandé (tests exécutés avec Node.js 24).
+Ce dossier n'est relié ni à `index.html`, ni à Cloudflare, Tally, Make, Google Sheets ou à la démonstration Sites. Aucun envoi réel ni stockage n'a été effectué pendant le développement et les tests. L'adaptateur OpenAI pourra envoyer une demande après activation explicite côté serveur. Le module serveur est une fonction à importer dans un futur backend, **pas une route HTTP ni un SaaS multiclient opérationnel**. Node.js 22 ou plus récent est recommandé (tests exécutés avec Node.js 24).
 
 ## Fichiers
 
@@ -12,6 +12,9 @@ Ce dossier n'est relié ni à `index.html`, ni à Cloudflare, Tally, Make, Googl
 - `qualification.test.mjs` : cinq tests historiques ; inchangé.
 - `service.server.mjs` : validation stricte, adaptateur fournisseur configurable, délai maximal et repli.
 - `service.server.test.mjs` : quinze tests supplémentaires sans réseau.
+- `openai.server.mjs` : adaptateur HTTP OpenAI Responses, activable uniquement par configuration serveur.
+- `openai.server.test.mjs` : 26 tests supplémentaires avec HTTP fictif.
+- [OPENAI.md](./OPENAI.md) : contrat officiel vérifié, configuration, activation ultérieure et revue de sécurité.
 
 ## Tester
 
@@ -22,7 +25,7 @@ node --test j6/qualification.test.mjs
 node --test j6/*.test.mjs
 ```
 
-La suite complète couvre 20 tests : règles, simulation, entrées invalides, contrat de sortie, erreurs synchrones/asynchrones, délai dépassé, nettoyage du délai, revue humaine, requêtes concurrentes et configuration. Les réponses invalides sont testées dans plusieurs variantes. Ces contrôles ne mesurent pas la qualité d'un véritable modèle.
+La suite complète couvre 46 tests : règles, simulation, entrées invalides, contrat de sortie, erreurs synchrones/asynchrones, délai dépassé, nettoyage du délai, revue humaine, requêtes concurrentes et configuration. Les réponses invalides sont testées dans plusieurs variantes. Ces contrôles ne mesurent pas la qualité d'un véritable modèle.
 
 ## Usage côté serveur, sans IA connectée
 
@@ -61,7 +64,7 @@ const analyser = creerServiceQualification({ fournisseur, timeoutMs: 2000 });
 // analysePar === 'simulation', jamais 'ia' pour ce transport fictif.
 ```
 
-L'adaptateur attend `transport({ modele, demande, contexte, signal })`, retournant une promesse, un objet JSON métier ou du texte JSON. Le contexte entreprise est réservé au routage et à l'autorisation **côté serveur** : ne pas le transmettre aveuglément au modèle. Un futur adaptateur réel devra construire les instructions du modèle, effectuer l'appel autorisé et extraire le contenu de l'enveloppe propre au fournisseur. `origine: 'ia'` est réservé à cet adaptateur réellement connecté ; le module ne peut pas vérifier la nature du transport injecté. Aucun appel n'a lieu à la création du fournisseur.
+L'adaptateur attend `transport({ modele, demande, contexte, signal })`, retournant une promesse, un objet JSON métier ou du texte JSON. Le contexte entreprise est réservé au routage et à l'autorisation **côté serveur** : ne pas le transmettre aveuglément au modèle. L'adaptateur OpenAI réalise ce travail (voir [OPENAI.md](./OPENAI.md)) mais n'a été testé qu'avec HTTP fictif. `origine: 'ia'` est réservé à cet adaptateur réellement connecté ; le module ne peut pas vérifier la nature du transport injecté. Aucun appel n'a lieu à la création du fournisseur.
 
 ## Contrat JSON
 
@@ -105,9 +108,9 @@ Les échecs du fournisseur renvoient une qualification par règles avec un code 
 
 ## Travail restant avant connexion réelle et SaaS multiclient
 
-1. Choisir le modèle, le fournisseur et le budget, puis écrire et tester l'adaptateur HTTP serveur : destination approuvée, TLS, secret côté serveur, extraction du JSON et respect de l'annulation. Aucun secret ne doit être placé dans le navigateur ou le dépôt.
+1. Choisir un modèle OpenAI compatible Responses et Structured Outputs, approuver le budget et fournir la configuration serveur sécurisée. L'adaptateur HTTP est écrit et testé fictivement ; sa compatibilité avec le modèle et le compte choisis reste à vérifier par un test réel autorisé. Aucun secret ne doit être placé dans le navigateur ou le dépôt.
 2. Définir les instructions métier, traiter les descriptions comme des données non fiables (injection d'instructions possible), comparer la qualité sur des cas fictifs et organiser la validation humaine. Aucune action commerciale automatique n'est déclenchée ici.
-3. Construire le backend authentifié : autorisation par entreprise, isolation du stockage, quotas et limites de débit/coût, limites du corps HTTP et de la réponse réseau avant lecture complète. La limite JSON locale ne remplace pas ces limites réseau.
+3. Construire le backend authentifié : autorisation par entreprise, isolation du stockage, quotas et limites de débit/coût, limites du corps HTTP entrant. L'adaptateur OpenAI borne maintenant la réponse réseau avant lecture complète ; cela ne remplace pas les quotas par entreprise.
 4. Minimiser ou masquer les données personnelles, choisir les conditions de traitement du fournisseur, la rétention, les journaux expurgés et les procédures de suppression. Aucun traitement réel n'a été testé.
 5. Tester l'intégration réelle autorisée (latence, erreurs réseau, quotas, coûts, qualité et isolation) avant tout déploiement. Le fournisseur absent permet déjà de développer et tester localement sans dépense.
 

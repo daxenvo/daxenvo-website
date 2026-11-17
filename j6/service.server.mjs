@@ -6,6 +6,14 @@ if (typeof window !== 'undefined' || typeof process === 'undefined' || process.r
   throw new Error('Module réservé au serveur Node.js');
 }
 
+// Erreurs typées internes : aucun contenu brut du fournisseur dans les messages.
+export class ErreurReponseIA extends Error {
+  constructor() { super('Réponse fournisseur invalide'); this.name = 'ErreurReponseIA'; }
+}
+export class ErreurExpirationIA extends Error {
+  constructor() { super('Délai fournisseur dépassé'); this.name = 'ErreurExpirationIA'; }
+}
+
 const CHAMPS = Object.freeze({ description: 4000, budget: 200, delai: 200, typeTravaux: 200, ville: 200 });
 const PRIORITES = ['elevee', 'moyenne', 'faible', 'a_preciser'];
 const SORTIE = ['priorite', 'motif', 'informationsManquantes', 'actionRecommandee', 'requiresHumanReview'];
@@ -130,8 +138,9 @@ export function creerServiceQualification({ fournisseur = null, timeoutMs = 2000
           })),
           expiration
         ]);
-      } catch {
-        return repli(controleur.signal.aborted ? 'IA_DELAI_DEPASSE' : 'IA_INDISPONIBLE');
+      } catch (erreur) {
+        if (controleur.signal.aborted || erreur instanceof ErreurExpirationIA) return repli('IA_DELAI_DEPASSE');
+        return repli(erreur instanceof ErreurReponseIA ? 'IA_REPONSE_INVALIDE' : 'IA_INDISPONIBLE');
       }
       // Un transport synchrone peut bloquer la boucle et empêcher le timer de s'exécuter.
       if (performance.now() - debut >= timeoutMs) {
