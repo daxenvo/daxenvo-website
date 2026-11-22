@@ -1,0 +1,87 @@
+@font-face {
+  font-family: Inter;
+  src: url("/fonts/inter-latin-variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+
+:root {
+  --font-ui: Inter, system-ui, sans-serif;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --radius-small: 6px;
+  --radius-control: 8px;
+  --radius-card: 12px;
+  --radius-dialog: 16px;
+  --brand-ai: #8b5cf6;
+  --light-bg: #f8fafc;
+  --light-panel: #fff;
+  --dark-bg: #0b1120;
+  --dark-panel: #1e293b;
+  --dark-border: #334155;
+  --bg: var(--light-bg);
+  --panel: var(--light-panel);
+  --sidebar: #fff;
+  --hover: #f1f5f9;
+  --text: #101828;
+  --muted: #536278;
+  --faint: var(--muted);
+  --border: #e2e8f0;
+  --control-border: #788599;
+  --primary: #4f46e5;
+  --accent: var(--primary);
+  --accent-text: #4338ca;
+  --accent-hover: #4338ca;
+  --accent-ink: #fff;
+  --accent-soft: #eef2ff;
+  --success: #047451;
+  --info: #205bb0;
+  --warning: #844800;
+  --danger: #b42332;
+  --soft-success: #dcfce7;
+  --soft-info: #eaf2ff;
+  --soft-warning: #fff3d5;
+  --soft-danger: #ffeded;
+  --shadow: 0 3px 20px #10182809;
+  --overlay: #101828a6;
+  color-scheme: light;
+}
+
+.dark {
+  color-scheme: dark;
+  --bg: var(--dark-bg);
+  --sidebar: #101828;
+  --panel: var(--dark-panel);
+  --hover: #273449;
+  --text: #f8fafc;
+  --muted: #a4b2c5;
+  --border: var(--dark-border);
+  --control-border: #788ba5;
+  --primary: #6366f1;
+  --accent: #818cf8;
+  --accent-text: #bdc4ff;
+  --accent-hover: #a5b4fc;
+  --accent-ink: #000;
+  --accent-soft: #312e81;
+  --success: #6ee7b7;
+  --info: #93c5fd;
+  --warning: #fbbf24;
+  --danger: #fda4af;
+  --soft-success: #123d32;
+  --soft-info: #183454;
+  --soft-warning: #43331e;
+  --soft-danger: #482635;
+  --shadow: none;
+  --overlay: #020617cc;
+}
+
+html { background: var(--bg); }
+@media (prefers-color-scheme: dark) {
+  html:not(.light):not(.dark) { background: var(--dark-bg); color-scheme: dark; }
+}

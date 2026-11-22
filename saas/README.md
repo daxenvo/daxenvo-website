@@ -1,0 +1,157 @@
+# Daxenvo SaaS — fondations J7
+
+Application Next.js App Router / TypeScript / Tailwind CSS, distincte du site vitrine `../index.html`.
+
+Point de départ : branche J6 au commit `625f3f497cb633dac525fec221e611c2a0a96fe1`. Développement local sur `feature/j7-saas-foundation`. Aucun commit, push, déploiement public, changement Make ou appel réel OpenAI n'est nécessaire à cette application.
+
+## Démarrer et prévisualiser
+
+Prérequis : Node.js 22+ (24.22.1 utilisé), npm et les fichiers J6 adjacents. Les versions directes sont figées, `package-lock.json` verrouille les dépendances transitives. Aucune police ni image distante n'est requise.
+
+Depuis la racine du dépôt :
+
+```bash
+cd saas
+npm ci --cache /tmp/daxenvo-npm-cache
+npm run dev
+```
+
+Ouvrir `/fr/tableau-de-bord` sur le serveur local, port 3000. La racine redirige automatiquement vers ce tableau de bord. Aucune variable d'environnement n'est nécessaire pour explorer la démonstration.
+
+Pour vérifier le mode production local :
+
+```bash
+npm run build
+npm run start
+```
+
+La racine Turbopack et la collecte des dépendances serveur sont réglées sur le dépôt pour importer les modules J6 situés hors de `saas`. Ne pas déplacer ou copier le moteur J6 dans le navigateur. L'utilisation de deux workers borne les ressources du build.
+
+## Architecture
+
+```text
+saas/
+  src/app/
+    layout.tsx                      HTML, métadonnées, thème et état local
+    [locale]/layout.tsx              validation de la langue et navigation
+    [locale]/[section]/page.tsx      sept sections autorisées, rendu serveur
+    [locale]/actions.ts             action serveur de qualification par règles
+  src/components/                   navigation, écrans, formulaires, dialogues
+  src/lib/domain/                   schémas Zod, modèles, opérations et fixtures
+  src/lib/demo/                     magasin observable et persistance locale
+  src/lib/i18n/                     dictionnaire FR, routes et formats régionaux
+  src/lib/qualification/server.ts   frontière server-only vers J6
+  src/lib/supabase/                 client serveur et vérification d'appartenance
+  supabase/migrations/              tables, contraintes multientreprises et RLS
+  supabase/tests/                   scénario SQL d'isolation à exécuter plus tard
+  tests/                           tests navigateur Playwright
+```
+
+Les composants manipulent les modèles métier validés ; le magasin applique des opérations typées sans modifier les fixtures. Les champs longs, budgets, dates, horaires, références et doublons sont contrôlés. Les limites de démonstration sont de 300 éléments par collection.
+
+## Fonctionnalités réellement opérationnelles
+
+| Section           | Fonctionnement actuel                                                                                                                                                                                    |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tableau de bord   | Indicateurs calculés à partir des demandes, activité sur 7/30 jours, avancement, dernières demandes et agenda.                                                                                           |
+| Prospects         | Liste, recherche par nom/secteur/ville et ajout d'un exemple fictif.                                                                                                                                     |
+| Demandes de devis | Création, recherche, filtre par statut, détail et changement de statut. Les budgets sont des estimations, pas du chiffre d'affaires.                                                                     |
+| Qualification     | Envoi d'un exemple à une action Next.js, validation serveur, exécution du moteur de règles J6, priorité, motif, informations manquantes, action proposée et revue humaine. Résultat mémorisé localement. |
+| Suivi commercial  | Création d'une tâche liée à une demande, échéance, passage terminé/à réaliser. Aucun message envoyé.                                                                                                     |
+| Rendez-vous       | Création et classement par date/heure. Aucun calendrier ou service de visioconférence connecté.                                                                                                          |
+| Paramètres        | Thème clair, sombre ou système, réinitialisation des exemples et état honnête des intégrations.                                                                                                          |
+
+La navigation est fonctionnelle au clavier et responsive. Le menu mobile et les dialogues utilisent `<dialog>` (focus contenu, fermeture par Échap). Les thèmes utilisent des couleurs sémantiques, un fond clair gris bleuté et des panneaux blancs et un contraste renforcé ; les statuts ne sont pas indiqués uniquement par une couleur. Le choix du thème est mémorisé via `next-themes` et l'option système réagit aux changements de l'appareil. Un audit d'accessibilité complet reste à faire.
+
+L'initialisation locale est explicite : les actions de mutation attendent la fin du chargement. Les données corrompues sont remplacées par les fixtures avec avertissement. Un stockage bloqué bascule en mémoire temporaire avec un message. Aucune erreur ni contenu métier n'est journalisé par le magasin.
+
+## Données fictives et limites de la persistance
+
+Tous les exemples initiaux sont fictifs, y compris l'« Atelier Démo », qui n'est **pas un compte authentifié**. L'interface et les formulaires le signalent. La date de référence des fixtures est le **22 novembre 2026** ; elle est fixe afin de rendre les tests reproductibles. Les budgets et indicateurs ne sont pas des résultats commerciaux réels.
+
+Les ajouts, changements et qualifications sont conservés dans `localStorage` sous `daxenvo.demo.v1`. Le thème utilise `daxenvo.theme`. Il n'y a ni synchronisation serveur, ni partage entre appareils, ni garantie de sauvegarde. Deux onglets ne se synchronisent pas en temps réel. Toute personne utilisant ce navigateur peut lire ou modifier ces données : **ne saisir aucune donnée personnelle réelle ou confidentielle**. Cette persistance ne constitue ni une base sécurisée ni l'isolation d'un SaaS multiclient.
+
+## Internationalisation
+
+La langue fait partie des routes (`/fr/...`). `src/lib/i18n/dictionaries.ts` fournit la liste de langues autorisées, le dictionnaire des titres/navigation/statuts et les formats `Intl` français (EUR, Europe/Paris). Seul le français est disponible ; les autres langues renvoient 404 pour éviter de présenter une traduction inexistante.
+
+Avant d'ajouter une langue, compléter son dictionnaire, extraire les textes détaillés encore français dans les composants/formulaires, adapter les formats et la langue HTML du layout, puis ajouter les tests de navigation/traduction. L'architecture est préparée, mais aucune interface multilingue complète n'est revendiquée à J7.
+
+## Supabase : préparation, sans sécurité simulée
+
+Le code de démonstration ne crée pas de session, ne se connecte pas à Supabase et ne dépend d'aucune clé. `.env.example` ne contient que des champs vides. La configuration future est exclusivement serveur : `SUPABASE_URL` et `SUPABASE_PUBLISHABLE_KEY`. Aucune clé `service_role` n'est utilisée.
+
+`createSupabaseServerClient` utilise les cookies via `@supabase/ssr`. `requireCompanyAccess` :
+
+1. valide l'identifiant d'entreprise candidat ;
+2. demande à Supabase de vérifier l'utilisateur (`auth.getUser`, pas une session déclarée par le client) ;
+3. vérifie son adhésion à l'entreprise ;
+4. refuse l'accès si configuration/session/adhésion est manquante ou si la vérification échoue.
+
+`listCompanyRequests` vérifie ce contexte à chaque appel et ajoute le filtre d'entreprise à sa requête. Ce point d'entrée n'est exposé à aucune route ou interface de démonstration. Il ne retourne jamais des fixtures en remplacement d'un échec d'autorisation. Le renouvellement des cookies doit être intégré à une action/route de session qui autorise leur écriture ; aucun échec d'écriture de cookie n'est masqué.
+
+La migration `001_company_foundation.sql` prépare entreprises, adhésions, prospects, demandes, suivis et rendez-vous :
+
+- `company_id` obligatoire sur chaque donnée métier ;
+- politiques RLS et privilèges limités aux adhésions de l'utilisateur authentifié ;
+- aucun accès anonyme ;
+- aucune modification des entreprises ou adhésions par le client ;
+- clés étrangères composites empêchant de rattacher un projet ou suivi à une autre entreprise.
+
+**Migration non exécutée, politiques RLS non validées sur une base réelle.** Le script `supabase/tests/tenant-isolation.sql` est un scénario transactionnel futur avec deux entreprises fictives, lecture interentreprises interdite, écriture interdite, refus d'élévation de rôle et refus anonyme. Son résultat n'est pas compté dans les tests passés de J7.
+
+Avant usage réel : provisionner un projet de développement, appliquer la migration, exécuter ce scénario avec arrêt sur erreur, générer les types de base, ajouter les tests d'isolation complets, puis développer authentification, déconnexion, récupération de session et provisionnement des entreprises/membres. Les rôles sont préparés ; les droits métier fins, invitations, facturation, journaux d'audit et gestion des utilisateurs restent à développer. Ne pas exposer un point d'entrée réel avant ces validations.
+
+## J6 et OpenAI
+
+Tous les fichiers J6 restent inchangés. `server-only` empêche l'import du pont J6 dans un composant client. L'action `qualifierDemonstration` valide et minimise les champs autorisés puis impose `fournisseur: null`. Elle ne lit pas `OPENAI_ENABLED` et **n'importe jamais l'adaptateur OpenAI**. Le contexte fixe de démonstration ne prouve aucune identité et n'est utilisé pour aucun accès à une base.
+
+Cette action est accessible depuis les pages de démonstration et calcule uniquement des règles locales, sans stockage serveur. Elle ne doit pas être transformée en appel IA ou en accès aux données réelles sans authentification, autorisation et quotas. Pour la production, passer par `requireCompanyAccess`, minimiser les données, établir budgets/quotas, puis connecter le fournisseur serveur J6. Ne jamais envoyer le `tenantId` au modèle. Aucun appel commercial automatique n'est déclenché ici.
+
+Aucun secret dans les composants, les variables publiques ou GitHub ; exclure les fichiers J6 et les secrets des ressources publiques du déploiement futur. Les textes de prospects/modèles restent non fiables et sont affichés en texte échappé, jamais via `dangerouslySetInnerHTML`.
+
+## Vérifications
+
+Depuis `saas` :
+
+```bash
+node --test ../j6/*.test.mjs
+npm run test
+npm run typecheck
+npm run lint
+npm run build
+npm run test:e2e
+```
+
+Les tests navigateur exécutent le **build de production local** sur le port 3127, puis arrêtent leur serveur. Chromium est utilisé depuis `/usr/bin/chromium` s'il existe ; sinon installer le navigateur Playwright (`npx playwright install chromium`) ou définir `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` vers un navigateur local compatible. Aucun navigateur distant/service payant nécessaire. Les tests bloquent les requêtes navigateur externes.
+
+Les tests vérifient notamment la navigation, les créations et la persistance, les filtres, les règles serveur, la validation humaine, le suivi, l'agenda, les trois thèmes et le changement de thème système, le clavier, le mobile et les locales refusées. Voir le bilan livré pour les résultats effectivement exécutés ; le scénario SQL reste explicitement non exécuté.
+
+## Bilan exécuté le 22 novembre 2026
+
+- J6 : **46 tests réussis**, aucun échec ; fichiers J6 inchangés.
+- Domaine et stockage J7 : **11 tests réussis**, aucun échec.
+- Chromium sur build de production : **15 tests réussis**, aucun échec, dont les cinq tests du Design System et les contrôles automatisés axe WCAG A/AA du tableau de bord et du formulaire en clair/sombre. Ce périmètre ne constitue pas une certification d'accessibilité de tout le logiciel.
+- TypeScript : réussi ; ESLint : réussi sans avertissement ; build Next.js : réussi.
+- Audit npm des dépendances de production installées : aucune vulnérabilité connue signalée au moment du contrôle.
+- Migration Supabase et scénario SQL d'isolation : **non exécutés**, aucun projet Supabase configuré.
+
+Les premiers contrôles ont permis de corriger le périmètre Turbopack nécessaire à J6, l'initialisation des données avant mutation, les libellés de listes déroulantes, le retour de focus des dialogues et un débordement mobile. Aucun échec connu ne reste dans les commandes de validation exécutées.
+
+La prévisualisation de cette instance a été lancée localement sur le port 3001 (`/fr/tableau-de-bord`), le port 3000 étant occupé. Pour utiliser ce même port sur une autre instance : `npm run dev -- --port 3001`. Aucun lien public ni déploiement n'a été créé.
+
+## Design System officiel V1.0
+
+La référence fournie est conservée dans [la charte](../docs/BRAND_GUIDELINES.md). Les sept modules partagent la feuille de styles globale et les tokens de `src/app/tokens.css`. Le symbole de marque est provisoire. Inter variable (sous-ensemble latin, Fontsource 5.3.0) est servi localement avec sa licence OFL. Vérifier la couverture des glyphes avant d’ajouter une langue utilisant une autre écriture.
+
+### Variantes de contraste
+
+| Usage | Combinaison retenue | Contraste |
+|---|---|---|
+| Bouton principal sombre | Noir sur #6366F1 | 4,70:1 (blanc sur indigo donne 4,47:1) |
+| Texte actif sombre | #BDC4FF sur #312E81 | 6,80:1 (l’accent #818CF8 donne 3,83:1) |
+| Texte secondaire clair sur sélection | #536278 sur #EEF2FF | 5,55:1 (la référence #64748B donne 4,26:1) |
+| Texte secondaire sombre sur surface #334155 | #A4B2C5 | 4,81:1 |
+| Bouton principal clair | Blanc sur #4F46E5 | 6,29:1 |
+
+Les contrôles utilisent une bordure renforcée, distincte des séparateurs. Les statuts combinent texte et variantes fonctionnelles adaptées aux surfaces. Le jeton violet IA est réservé. La qualification locale utilise les règles J6. Les contrôles automatiques axe couvrent les sept états initiaux dans les deux thèmes, et les tests de largeur couvrent 390, 820 et 1440 pixels. Un audit manuel avec lecteurs d’écran et des traductions réelles reste à effectuer.
