@@ -108,6 +108,7 @@ function SidebarContent({ onNavigate }: { onNavigate?: () => void }) {
           <Link onClick={onNavigate} href="/fr/parametres">
             Voir les fonctionnalités <ArrowUpRight size={14} />
           </Link>
+          <Link href="/connexion" prefetch={false}>Connexion à votre espace</Link>
         </div>
         <div className="sidebar-footer">
           <span className="status-dot" />

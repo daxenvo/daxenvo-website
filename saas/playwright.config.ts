@@ -20,6 +20,7 @@ export default defineConfig({
     command: "npm run start -- --port 3127",
     url: "http://127.0.0.1:3127",
     reuseExistingServer: false,
+    env: { SUPABASE_URL: "", SUPABASE_PUBLISHABLE_KEY: "" },
     timeout: 30000,
   },
 });

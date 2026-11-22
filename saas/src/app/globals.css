@@ -2389,3 +2389,10 @@ td, th { font-size: 13px; }
 .heading-dot { color: var(--accent); }
 .nav-item { font-weight: 500; overflow-wrap: anywhere; }
 .page-heading > div, .panel-heading > div { min-width: 0; overflow-wrap: anywhere; }
+
+.access-page { min-height: 100svh; display: grid; place-items: center; padding: var(--space-6); }
+.access-panel { width: min(100%, 28rem); padding: clamp(20px, 5vw, 40px); display: grid; gap: var(--space-6); }
+.access-panel .brand { padding: 0; }
+.access-panel h1 { font-size: 28px; font-weight: 700; }
+.access-panel form { display: grid; gap: var(--space-4); }
+.access-panel a { color: var(--accent-text); text-decoration: underline; }

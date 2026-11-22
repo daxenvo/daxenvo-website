@@ -11,7 +11,7 @@ import { createDemoStore } from "@/lib/demo/store";
 
 type Store = ReturnType<typeof createDemoStore>;
 const DemoContext = createContext<Store | null>(null);
-export function Providers({ children }: { children: React.ReactNode }) {
+export function DemoProvider({ children }: { children: React.ReactNode }) {
   const [store] = useState(createDemoStore);
   useEffect(() => {
     try {
@@ -20,6 +20,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
       store.hydrate(null);
     }
   }, [store]);
+  return <DemoContext.Provider value={store}>{children}</DemoContext.Provider>;
+}
+export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <ThemeProvider
       attribute="class"
@@ -28,7 +31,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
       storageKey="daxenvo.theme"
       disableTransitionOnChange
     >
-      <DemoContext.Provider value={store}>{children}</DemoContext.Provider>
+      {children}
     </ThemeProvider>
   );
 }

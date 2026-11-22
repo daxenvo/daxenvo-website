@@ -155,3 +155,19 @@ La référence fournie est conservée dans [la charte](../docs/BRAND_GUIDELINES.
 | Bouton principal clair | Blanc sur #4F46E5 | 6,29:1 |
 
 Les contrôles utilisent une bordure renforcée, distincte des séparateurs. Les statuts combinent texte et variantes fonctionnelles adaptées aux surfaces. Le jeton violet IA est réservé. La qualification locale utilise les règles J6. Les contrôles automatiques axe couvrent les sept états initiaux dans les deux thèmes, et les tests de largeur couvrent 390, 820 et 1440 pixels. Un audit manuel avec lecteurs d’écran et des traductions réelles reste à effectuer.
+
+## J8 · Connexion et espace entreprise
+
+Les sept écrans sous `/fr` utilisent le stockage fictif J7. La connexion par
+mot de passe se trouve sous `/connexion` et l’espace entreprise sous `/espace`.
+Configurer côté serveur `SUPABASE_URL` et `SUPABASE_PUBLISHABLE_KEY` (clé
+`sb_publishable_`). Les comptes et leurs adhésions doivent exister au préalable.
+La première entreprise par ordre d’identifiant est active en l’absence de choix.
+L’espace vérifie l’identité et relit les adhésions à chaque requête.
+La déconnexion concerne la session courante.
+
+Depuis `saas`, exécuter `npm run build`, puis `npm run test:e2e` pour la démo
+et le cas sans configuration, et `npm run test:auth` pour les parcours privés.
+Cette dernière commande lance le build en local et un double HTTP de Supabase
+sur les ports 3128 et 3129. Le SDK SSR, les cookies, le navigateur et les
+réponses Next.js sont réels. Le fournisseur Auth et les adhésions sont simulés.

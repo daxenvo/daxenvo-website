@@ -10,7 +10,8 @@
     "lint": "eslint . --max-warnings=0",
     "test": "node --experimental-strip-types --test src/lib/domain/*.test.ts",
     "test:e2e": "playwright test",
-    "test:rls": "node --test supabase/tests/*.test.mjs"
+    "test:rls": "node --test supabase/tests/*.test.mjs",
+    "test:auth": "playwright test -c playwright.auth.config.ts"
   },
   "dependencies": {
     "@supabase/ssr": "0.12.7",
