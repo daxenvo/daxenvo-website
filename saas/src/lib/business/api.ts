@@ -5,7 +5,7 @@ import { responseSession } from "@/lib/supabase/response";
 import { AccessUnavailable, activeCompanyCookie, memberships, selectCompany, verifiedUser } from "@/lib/supabase/session";
 
 type Client = ReturnType<ReturnType<typeof responseSession>["client"]>;
-type Fields = Record<string, string | number | undefined>;
+type Fields = Record<string, string | number | boolean | undefined>;
 export type Resource = {
   table: string;
   columns: string;
