@@ -1,6 +1,6 @@
 // PostgREST double for route tests. Tenant isolation must come from the route's filters.
 import { randomUUID } from "node:crypto";
-const tables = new Map([["prospects", new Map()] ]);
+const tables = new Map([["prospects", new Map()], ["quote_requests", new Map()]]);
 
 export function businessReply(request, url, input, reply) {
   const table = tables.get(url.pathname.split("/").pop());
