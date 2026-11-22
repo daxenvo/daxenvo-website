@@ -1,6 +1,7 @@
 // Double HTTP réservé aux tests Playwright, lancé sur la boucle locale.
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
+import { businessReply } from "./business-provider.mjs";
 
 const accounts = new Map(
   ["alice", "bob", "isolated", "offline"].map((name) => [
@@ -90,5 +91,6 @@ createServer(async (request, response) => {
         return reply(200, [member(beta, "Entreprise Beta", "member")]);
     }
   }
+  if (url.pathname.startsWith("/rest/v1/")) return businessReply(request, url, input, reply);
   return reply(404, {});
 }).listen(3129, "127.0.0.1");
