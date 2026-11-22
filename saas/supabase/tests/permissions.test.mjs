@@ -162,3 +162,19 @@ test("Utilisateur sans adhésion — aucune donnée accessible", async () => {
     assert.equal((await db.query(`select * from ${table}`)).rows.length, 0);
   }
 });
+
+test("Échéance civile et instant du rendez-vous conservés après un changement de fuseau SQL", async () => {
+  await signIn(alice);
+  await db.exec("set local time zone 'Europe/Paris'");
+  await db.query("update followups set due_date = $1 where company_id = $2", ["2027-10-31", a]);
+  await db.query("update appointments set starts_at = $1 where company_id = $2", ["2027-10-31T02:30:00.123456+02:00", a]);
+  await db.exec("set local time zone 'America/New_York'");
+  const result = await db.query(
+    `select f.due_date::text as day,
+            to_char(ap.starts_at at time zone 'UTC', 'YYYY-MM-DD HH24:MI:SS.US') as instant
+       from followups f join appointments ap using (company_id, request_id)
+      where f.company_id = $1`,
+    [a],
+  );
+  assert.deepEqual(result.rows, [{ day: "2027-10-31", instant: "2027-10-31 00:30:00.123456" }]);
+});
