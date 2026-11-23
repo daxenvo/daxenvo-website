@@ -91,6 +91,6 @@ createServer(async (request, response) => {
         return reply(200, [member(beta, "Entreprise Beta", "member")]);
     }
   }
-  if (url.pathname.startsWith("/rest/v1/")) return businessReply(request, url, input, reply);
+  if (url.pathname.startsWith("/rest/v1/")) return businessReply(request, url, input, reply, session.user.id);
   return reply(404, {});
 }).listen(3129, "127.0.0.1");

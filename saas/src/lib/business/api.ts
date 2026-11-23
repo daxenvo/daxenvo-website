@@ -56,17 +56,22 @@ const page = z.strictObject({
   limit: z.string().regex(/^[1-9]\d{0,2}$/).transform(Number).pipe(z.number().max(100)).optional(),
 });
 
+export async function businessAccess(request: NextRequest, session: ReturnType<typeof responseSession>) {
+  if (!["GET", "HEAD"].includes(request.method) && request.headers.get("origin") !== request.nextUrl.protocol + "//" + request.headers.get("host"))
+    throw new ApiError(403, "ORIGIN_REFUSED");
+  const client = session.client();
+  const user = await verifiedUser(client);
+  const active = selectCompany(await memberships(client, user.id), request.cookies.get(activeCompanyCookie)?.value);
+  return {client, active};
+}
+
 export async function handle(request: NextRequest, resource: Resource, id?: string) {
   const session = responseSession(request);
   const json = (value: unknown, status = 200) =>
     session.finish(NextResponse.json(value, { status }));
   try {
     const method = request.method === "HEAD" ? "GET" : request.method;
-    if (method !== "GET" && request.headers.get("origin") !== request.nextUrl.protocol + "//" + request.headers.get("host"))
-      throw new ApiError(403, "ORIGIN_REFUSED");
-    const client = session.client();
-    const user = await verifiedUser(client);
-    const active = selectCompany(await memberships(client, user.id), request.cookies.get(activeCompanyCookie)?.value);
+    const {client, active} = await businessAccess(request, session);
     const company = active.company_id;
     if (id !== undefined) z.uuid().parse(id);
     const params = request.nextUrl.searchParams;
@@ -104,12 +109,16 @@ export async function handle(request: NextRequest, resource: Resource, id?: stri
     return method === "DELETE" ? session.finish(new NextResponse(null, { status: 204 }))
       : json({ data }, method === "POST" ? 201 : 200);
   } catch (error) {
-    if (error instanceof ApiError) return json({ error: error.message }, error.status);
-    if (error instanceof z.ZodError) return json({ error: "INVALID_INPUT" }, 400);
-    if (error instanceof AccessUnavailable) {
-      const status = { UNAUTHENTICATED: 401, FORBIDDEN: 403, NOT_CONFIGURED: 503, UNAVAILABLE: 503 }[error.code];
-      return json({ error: error.code }, status);
-    }
-    return json({ error: "UNAVAILABLE" }, 503);
+    return businessError(error, json);
   }
+}
+
+export function businessError(error: unknown, json: (value: unknown, status: number) => NextResponse) {
+  if (error instanceof ApiError) return json({ error: error.message }, error.status);
+  if (error instanceof z.ZodError) return json({ error: "INVALID_INPUT" }, 400);
+  if (error instanceof AccessUnavailable) {
+    const status = { UNAUTHENTICATED: 401, FORBIDDEN: 403, NOT_CONFIGURED: 503, UNAVAILABLE: 503 }[error.code];
+    return json({ error: error.code }, status);
+  }
+  return json({ error: "UNAVAILABLE" }, 503);
 }
