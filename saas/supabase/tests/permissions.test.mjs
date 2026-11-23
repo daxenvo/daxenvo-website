@@ -26,6 +26,7 @@ before(async () => {
   for (const file of [
     "001_company_foundation.sql",
     "002_company_permissions.sql",
+    "003_request_qualifications.sql",
   ]) {
     await db.exec(await sqlFile("../migrations/" + file));
   }
@@ -177,4 +178,67 @@ test("Échéance civile et instant du rendez-vous conservés après un changemen
     [a],
   );
   assert.deepEqual(result.rows, [{ day: "2027-10-31", instant: "2027-10-31 00:30:00.123456" }]);
+});
+
+const testWriter = "ab".repeat(32);
+const ruleResult = {
+  version: "j6-regles-v1", priorite: "a_preciser", motif: "Calendrier à préciser",
+  actionRecommandee: "Demander le calendrier", informationsManquantes: ["budget"],
+  signaux: [], requiresHumanReview: true, analysePar: "regles", fournisseur: null,
+  repli: { code: "IA_NON_CONFIGUREE" },
+};
+async function qualificationFixture() {
+  await db.query("insert into daxenvo_private.qualification_writer(digest) values (sha256(convert_to($1,'UTF8')))", [testWriter]);
+  const { rows: [row] } = await db.query(`select id, jsonb_build_object('description',description,
+    'city',city,'project_type',project_type,'requested_timeline',requested_timeline,'budget',budget) as source
+    from quote_requests where company_id=$1`, [b]);
+  await signIn(alice);
+  return {
+    row,
+    write: (overrides = {}) => {
+      const args = { company: b, id: row.id, source: row.source, result: ruleResult, writer: testWriter, ...overrides };
+      return db.query("select * from record_request_qualification($1,$2,$3,$4,$5)",
+        [args.company,args.id,JSON.stringify(args.source),JSON.stringify(args.result),args.writer]);
+    },
+  };
+}
+
+test("Historique successif, auteur Auth et isolation RLS", async () => {
+  const { write } = await qualificationFixture();
+  const first = (await write()).rows[0];
+  const next = (await write()).rows[0];
+  assert.equal(first.created_by, alice);
+  assert.equal(next.revision, 2);
+  assert.notEqual(first.id, next.id);
+  assert.deepEqual((await db.query("select revision from request_qualifications order by revision")).rows, [{revision:1},{revision:2}]);
+  await signIn(bob);
+  assert.deepEqual((await db.query("select * from request_qualifications")).rows, []);
+});
+for (const [label, command] of [
+  ["INSERT direct", "insert into request_qualifications default values"],
+  ["UPDATE historique", "update request_qualifications set request_id=gen_random_uuid(), company_id=gen_random_uuid()"],
+  ["DELETE historique", "delete from request_qualifications"],
+  ["accès au condensat privé", "select * from daxenvo_private.qualification_writer"],
+]) {
+  test("Data API authenticated refuse " + label, async () => {
+    const {write} = await qualificationFixture();
+    await write();
+    await assert.rejects(db.query(command), {code:"42501"});
+  });
+}
+for (const [label, changes, code] of [
+  ["secret incorrect",{writer:"00".repeat(32)},"42501"],
+  ["source modifiée",{source:{}},"40001"],
+  ["entreprise incohérente",{company:a},"P0002"],
+  ["provenance falsifiée",{result:{...ruleResult,analysePar:"ia"}},"23514"],
+]) {
+  test("Persistance SQL refuse " + label, async () => {
+    const {write} = await qualificationFixture();
+    await assert.rejects(write(changes), {code});
+  });
+}
+test("Identité sans adhésion refusée même avec le secret serveur", async () => {
+  const {write} = await qualificationFixture();
+  await signIn(bob);
+  await assert.rejects(write(), {code:"42501"});
 });

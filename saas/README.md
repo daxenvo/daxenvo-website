@@ -171,3 +171,11 @@ et le cas sans configuration, et `npm run test:auth` pour les parcours privés.
 Cette dernière commande lance le build en local et un double HTTP de Supabase
 sur les ports 3128 et 3129. Le SDK SSR, les cookies, le navigateur et les
 réponses Next.js sont réels. Le fournisseur Auth et les adhésions sont simulés.
+
+### J8-3C · Historique de qualification
+
+La migration locale `003_request_qualifications.sql` crée l’historique et un secret d’écriture dédié, à provisionner séparément. L’application et PostgreSQL communiquent en HTTPS via la session Supabase de l’utilisateur. Le secret autorise uniquement l’appel de qualification, pour une demande et une adhésion que SQL vérifie de nouveau. Les clients authentifiés ont uniquement SELECT sur l’historique. L’auteur provient de `auth.uid()`.
+
+Pour une installation autorisée, générer 32 octets aléatoires et conserver leur représentation hexadécimale (64 caractères) dans le secret serveur `QUALIFICATION_WRITER_TOKEN`. Depuis une connexion d’administration, insérer dans `daxenvo_private.qualification_writer(digest)` les 32 octets SHA-256 du **texte UTF-8 hexadécimal**. La table accepte une seule ligne. La rotation consiste à remplacer le condensat et le secret serveur. Une table vide désactive les écritures. Exclure des journaux les corps RPC, les paramètres SQL et les secrets. Le serveur, les administrateurs de la base et les rôles privilégiés appartiennent au périmètre de confiance. Un secret compromis doit être remplacé.
+
+La fonction verrouille l’adhésion et la demande, compare les cinq données métier à celles analysées, puis ajoute une révision. Les données source sont comparées en mémoire SQL, seule la sortie J6 est conservée. Deux analyses acceptées produisent deux révisions. Le statut commercial reste géré séparément. La suppression autorisée de la demande supprime son historique par cascade. Tant que l’historique existe, la référence à l’auteur empêche sa suppression physique.
