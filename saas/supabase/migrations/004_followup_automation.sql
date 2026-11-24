@@ -71,7 +71,7 @@ declare
 begin
   select * into job from daxenvo_private.followup_job where company_id=tenant and request_id=target for update;
   if not found then return; end if;
-  select * into req from public.quote_requests where company_id=tenant and id=target;
+  select prospect_id,status,created_at into req.prospect_id,req.status,req.created_at from public.quote_requests where company_id=tenant and id=target;
   if not found then return; end if;
   select * into policy from daxenvo_private.followup_policy where company_id=tenant;
   select * into contact from daxenvo_private.followup_contact where company_id=tenant and prospect_id=req.prospect_id;
@@ -101,9 +101,10 @@ begin
 end $$;
 
 create function daxenvo_private.followup_source_changed() returns trigger
-language plpgsql security definer set search_path='' as $$
+language plpgsql security definer set search_path='' set lock_timeout='3s' set daxenvo.followup_company='' as $$
 declare target uuid;
 begin
+  perform set_config('daxenvo.followup_company',new.company_id::text,true);
   perform pg_advisory_xact_lock(hashtextextended(new.company_id::text,9));
   if tg_table_name='quote_requests' then
     target:=new.id;
@@ -124,8 +125,9 @@ create trigger followup_qualification after insert on public.request_qualificati
 -- An outstanding J8 reminder has precedence. Completing a manual task is not a delivery receipt.
 create index followup_open_request on public.followups(company_id,request_id) where not done;
 create function daxenvo_private.manual_followup_changed() returns trigger
-language plpgsql security definer set search_path='' as $$
+language plpgsql security definer set search_path='' set lock_timeout='3s' set daxenvo.followup_company='' as $$
 begin
+  perform set_config('daxenvo.followup_company',coalesce(new.company_id,old.company_id)::text,true);
   perform pg_advisory_xact_lock(hashtextextended(coalesce(new.company_id,old.company_id)::text,9));
   if tg_op='DELETE' or (tg_op='UPDATE' and old.request_id<>new.request_id) then
     perform daxenvo_private.evaluate_followup(old.company_id,old.request_id);
@@ -144,15 +146,16 @@ create function daxenvo_private.followup_role(tenant uuid) returns text
 language plpgsql stable set search_path='' as $$
 declare membership text;
 begin
-  select role into membership from public.company_memberships where company_id=tenant and user_id=auth.uid();
+  select role into membership from public.company_memberships where company_id=tenant and user_id=(nullif(current_setting('request.jwt.claims',true),'')::jsonb->>'sub')::uuid;
   if membership is null then raise insufficient_privilege; end if;
   return membership;
 end $$;
 
-create function public.configure_followup_automation(tenant uuid,delay_hours int,urgent_hours int,max_attempts int,batch_size int)
-returns void language plpgsql security definer set search_path='' as $$
+create function daxenvo_private.configure_followup_automation(tenant uuid,delay_hours int,urgent_hours int,max_attempts int,batch_size int)
+returns void language plpgsql security definer set search_path='' set lock_timeout='3s' set daxenvo.followup_company='' as $$
 declare target uuid;
 begin
+  perform set_config('daxenvo.followup_company',tenant::text,true);
   if daxenvo_private.followup_role(tenant) not in ('admin','owner') then raise insufficient_privilege; end if;
   perform pg_advisory_xact_lock(hashtextextended(tenant::text,9));
   insert into daxenvo_private.followup_policy values(tenant,delay_hours,urgent_hours,max_attempts,batch_size)
@@ -166,10 +169,11 @@ begin
   end loop;
 end $$;
 
-create function public.followup_automation_event(tenant uuid,target uuid,operation uuid,kind text,value text default null)
-returns void language plpgsql security definer set search_path='' as $$
+create function daxenvo_private.followup_automation_event(tenant uuid,target uuid,operation uuid,kind text,value text default null)
+returns void language plpgsql security definer set search_path='' set lock_timeout='3s' set daxenvo.followup_company='' as $$
 declare membership text; prospect uuid; affected uuid; event daxenvo_private.followup_event; until_at timestamptz;
 begin
+  perform set_config('daxenvo.followup_company',tenant::text,true);
   membership:=daxenvo_private.followup_role(tenant);
   if kind in ('resume','preference') and membership='member' then raise insufficient_privilege; end if;
   if kind is null or kind not in ('contact','interested','delay','information','appointment','refused','opt_out','human','pause','resume','preference')
@@ -180,10 +184,10 @@ begin
   select prospect_id into prospect from public.quote_requests where company_id=tenant and id=target;
   if not found then raise no_data_found; end if;
   insert into daxenvo_private.followup_event(company_id,request_id,operation_id,actor,kind,value)
-    values(tenant,target,operation,auth.uid(),kind,value) on conflict do nothing;
+    values(tenant,target,operation,(nullif(current_setting('request.jwt.claims',true),'')::jsonb->>'sub')::uuid,kind,value) on conflict do nothing;
   if not found then
     select * into strict event from daxenvo_private.followup_event where company_id=tenant and request_id=target and operation_id=operation;
-    if (event.actor,event.kind,event.value) is distinct from (auth.uid(),kind,value) then raise exception using errcode='PT409',message='EVENT_CONFLICT'; end if;
+    if (event.actor,event.kind,event.value) is distinct from ((nullif(current_setting('request.jwt.claims',true),'')::jsonb->>'sub')::uuid,kind,value) then raise exception using errcode='PT409',message='EVENT_CONFLICT'; end if;
     return;
   end if;
   if kind in ('preference','opt_out') then
@@ -202,7 +206,9 @@ begin
       last_contact=case when kind in ('pause','resume') then j.last_contact else now() end,
       paused=case when kind='pause' then true when kind='resume' then false else j.paused end,
       response=case when j.response='refused' or kind='pause' then j.response
-        when kind='resume' then null when kind='contact' then j.response else kind end,
+        when kind='refused' then 'refused' when kind='resume' then null
+        when j.response in ('interested','information','appointment','human') and kind in ('contact','delay') then j.response
+        when kind='contact' then j.response else kind end,
       defer_until=case when kind='delay' then until_at else j.defer_until end
       where company_id=tenant and request_id=target;
     perform daxenvo_private.evaluate_followup(tenant,target);
@@ -271,10 +277,11 @@ language sql stable set search_path='' as $$
 $$;
 revoke all on function daxenvo_private.prepared_followups(uuid) from public,anon,authenticated;
 
-create function public.followup_automation_status(tenant uuid,target uuid,before_id bigint default null)
-returns jsonb language plpgsql stable security definer set search_path='' as $$
+create function daxenvo_private.followup_automation_status(tenant uuid,target uuid,before_id bigint default null)
+returns jsonb language plpgsql security definer set search_path='' set lock_timeout='3s' set daxenvo.followup_company='' as $$
 declare job daxenvo_private.followup_job; history jsonb;
 begin
+  perform set_config('daxenvo.followup_company',tenant::text,true);
   perform daxenvo_private.followup_role(tenant);
   select * into job from daxenvo_private.followup_job where company_id=tenant and request_id=target;
   if not found then raise no_data_found; end if;
@@ -289,8 +296,78 @@ revoke all on daxenvo_private.followup_job,daxenvo_private.followup_policy,daxen
 revoke all on function daxenvo_private.audit_followup(),daxenvo_private.evaluate_followup(uuid,uuid),
   daxenvo_private.followup_source_changed(),daxenvo_private.followup_role(uuid),daxenvo_private.run_followups(uuid)
   from public,anon,authenticated;
-revoke all on function public.configure_followup_automation(uuid,int,int,int,int),public.followup_automation_event(uuid,uuid,uuid,text,text),
-  public.followup_automation_status(uuid,uuid,bigint) from public,anon,authenticated;
-grant execute on function public.configure_followup_automation(uuid,int,int,int,int),public.followup_automation_event(uuid,uuid,uuid,text,text),
+-- Nested trigger and RPC entry points set their own transaction-local tenant scope.
+create role daxenvo_followup_api nologin noinherit nobypassrls;
+grant daxenvo_followup_api to current_user;
+grant usage on schema public,daxenvo_private to daxenvo_followup_api;
+grant select(company_id,user_id,role) on public.company_memberships to daxenvo_followup_api;
+grant select(company_id,id,prospect_id,status,created_at) on public.quote_requests to daxenvo_followup_api;
+grant select(company_id,request_id,done) on public.followups to daxenvo_followup_api;
+grant select(company_id,request_id,revision,result) on public.request_qualifications to daxenvo_followup_api;
+create policy followup_actor on public.company_memberships for select to daxenvo_followup_api
+  using (company_id=nullif(current_setting('daxenvo.followup_company',true),'')::uuid and
+    user_id=(nullif(current_setting('request.jwt.claims',true),'')::jsonb->>'sub')::uuid);
+create policy followup_input on public.quote_requests for select to daxenvo_followup_api
+  using (company_id=nullif(current_setting('daxenvo.followup_company',true),'')::uuid);
+create policy followup_input on public.followups for select to daxenvo_followup_api
+  using (company_id=nullif(current_setting('daxenvo.followup_company',true),'')::uuid);
+create policy followup_input on public.request_qualifications for select to daxenvo_followup_api
+  using (company_id=nullif(current_setting('daxenvo.followup_company',true),'')::uuid);
+create policy followup_tenant on daxenvo_private.followup_policy to daxenvo_followup_api
+  using (company_id=nullif(current_setting('daxenvo.followup_company',true),'')::uuid)
+  with check (company_id=nullif(current_setting('daxenvo.followup_company',true),'')::uuid);
+create policy followup_tenant on daxenvo_private.followup_job to daxenvo_followup_api
+  using (company_id=nullif(current_setting('daxenvo.followup_company',true),'')::uuid)
+  with check (company_id=nullif(current_setting('daxenvo.followup_company',true),'')::uuid);
+create policy followup_tenant on daxenvo_private.followup_contact to daxenvo_followup_api
+  using (company_id=nullif(current_setting('daxenvo.followup_company',true),'')::uuid)
+  with check (company_id=nullif(current_setting('daxenvo.followup_company',true),'')::uuid);
+create policy followup_tenant on daxenvo_private.followup_event to daxenvo_followup_api
+  using (company_id=nullif(current_setting('daxenvo.followup_company',true),'')::uuid)
+  with check (company_id=nullif(current_setting('daxenvo.followup_company',true),'')::uuid);
+create policy followup_tenant on daxenvo_private.followup_history to daxenvo_followup_api
+  using (company_id=nullif(current_setting('daxenvo.followup_company',true),'')::uuid)
+  with check (company_id=nullif(current_setting('daxenvo.followup_company',true),'')::uuid);
+grant select,insert,update(delay_hours,urgent_hours,max_attempts,batch_size) on daxenvo_private.followup_policy to daxenvo_followup_api;
+grant select,insert,update(channel,opposed) on daxenvo_private.followup_contact to daxenvo_followup_api;
+grant select,insert(company_id,request_id),update(state,reason,channel,due_at,last_contact,defer_until,paused,response)
+  on daxenvo_private.followup_job to daxenvo_followup_api;
+grant select,insert on daxenvo_private.followup_history,daxenvo_private.followup_event to daxenvo_followup_api;
+grant execute on function daxenvo_private.audit_followup(),daxenvo_private.evaluate_followup(uuid,uuid),
+  daxenvo_private.followup_role(uuid) to daxenvo_followup_api;
+grant create on schema daxenvo_private to daxenvo_followup_api;
+alter function daxenvo_private.configure_followup_automation(uuid,int,int,int,int) owner to daxenvo_followup_api;
+alter function daxenvo_private.followup_automation_event(uuid,uuid,uuid,text,text) owner to daxenvo_followup_api;
+alter function daxenvo_private.followup_automation_status(uuid,uuid,bigint) owner to daxenvo_followup_api;
+alter function daxenvo_private.followup_source_changed() owner to daxenvo_followup_api;
+alter function daxenvo_private.manual_followup_changed() owner to daxenvo_followup_api;
+revoke create on schema daxenvo_private from daxenvo_followup_api;
+
+create function public.configure_followup_automation(tenant uuid,delay_hours int,urgent_hours int,max_attempts int,batch_size int)
+returns void language sql security invoker set search_path='' as $$
+  select daxenvo_private.configure_followup_automation(tenant,delay_hours,urgent_hours,max_attempts,batch_size)
+$$;
+
+create function public.followup_automation_event(tenant uuid,target uuid,operation uuid,kind text,value text default null)
+returns void language sql security invoker set search_path='' as $$
+  select daxenvo_private.followup_automation_event(tenant,target,operation,kind,value)
+$$;
+
+create function public.followup_automation_status(tenant uuid,target uuid,before_id bigint default null)
+returns jsonb language sql security invoker set search_path='' as $$
+  select daxenvo_private.followup_automation_status(tenant,target,before_id)
+$$;
+revoke all on function public.configure_followup_automation(uuid,int,int,int,int),
+  public.followup_automation_event(uuid,uuid,uuid,text,text),
+  public.followup_automation_status(uuid,uuid,bigint) from public,anon,authenticated,service_role;
+grant execute on function public.configure_followup_automation(uuid,int,int,int,int),
+  public.followup_automation_event(uuid,uuid,uuid,text,text),
   public.followup_automation_status(uuid,uuid,bigint) to authenticated;
+revoke all on function daxenvo_private.configure_followup_automation(uuid,int,int,int,int),
+  daxenvo_private.followup_automation_event(uuid,uuid,uuid,text,text),
+  daxenvo_private.followup_automation_status(uuid,uuid,bigint) from public,anon,authenticated,service_role;
+grant execute on function daxenvo_private.configure_followup_automation(uuid,int,int,int,int),
+  daxenvo_private.followup_automation_event(uuid,uuid,uuid,text,text),
+  daxenvo_private.followup_automation_status(uuid,uuid,bigint) to authenticated;
+revoke daxenvo_followup_api from current_user;
 commit;

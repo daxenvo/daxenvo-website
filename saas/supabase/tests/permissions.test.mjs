@@ -19,6 +19,8 @@ before(async () => {
     create schema extensions;
     create extension pgcrypto with schema extensions;
     create role anon;
+    create role service_role bypassrls;
+    alter default privileges in schema public grant execute on functions to service_role;
     create role authenticated;
     create schema auth;
     create table auth.users (id uuid primary key, email text);
@@ -428,4 +430,54 @@ test("J9 — une relance manuelle ouverte prend la main, sa clôture ne compte p
   await db.query("update followups set done=true where company_id=$1",[a]);
   assert.equal((await status()).job.state,"scheduled");
   assert.equal((await status()).job.sent_count,0);
+});
+
+test("J9 — ACL effectives des RPC, rôles et tables privées", async () => {
+  const names = ["configure_followup_automation","followup_automation_event","followup_automation_status"];
+  const {rows} = await db.query(`select n.nspname, p.prosecdef, r.rolname, r.rolbypassrls, r.rolcanlogin,
+      has_function_privilege('anon',p.oid,'EXECUTE') as anon,
+      has_function_privilege('service_role',p.oid,'EXECUTE') as service,
+      has_function_privilege('authenticated',p.oid,'EXECUTE') as member
+    from pg_proc p join pg_namespace n on n.oid=p.pronamespace join pg_roles r on r.oid=p.proowner
+    where proname=any($1) and n.nspname in ('public','daxenvo_private')`,[names]);
+  assert.equal(rows.length,6);
+  for (const row of rows) {
+    assert.equal(row.anon,false);
+    assert.equal(row.service,false);
+    assert.equal(row.member,true);
+    assert.equal(row.prosecdef,row.nspname==="daxenvo_private");
+    if (row.prosecdef) {
+      assert.equal(row.rolname,"daxenvo_followup_api");
+      assert.equal(row.rolbypassrls,false);
+      assert.equal(row.rolcanlogin,false);
+    }
+  }
+  const tables = await db.query(`select relrowsecurity,
+    has_table_privilege('authenticated',oid,'SELECT,INSERT,UPDATE,DELETE') as access
+    from pg_class where relnamespace='daxenvo_private'::regnamespace and relkind='r' and relname like 'followup_%'`);
+  assert.equal(tables.rows.length,6);
+  for (const row of tables.rows) assert.deepEqual(row,{relrowsecurity:true,access:false});
+  const grants = await db.query(`select
+    has_column_privilege('daxenvo_followup_api','daxenvo_private.followup_job','sent_count','UPDATE') as forge_count,
+    has_function_privilege('daxenvo_followup_api','daxenvo_private.confirm_followup_delivery(uuid,uuid,bigint,text)','EXECUTE') as confirm,
+    has_table_privilege('daxenvo_followup_api','daxenvo_private.qualification_writer','SELECT') as writer_secret`);
+  assert.deepEqual(grants.rows,[{forge_count:false,confirm:false,writer_secret:false}]);
+});
+
+test("J9 — un délai déclaré par un member préserve le suivi humain jusqu’à la reprise autorisée",async()=>{
+  const {event,status}=await automationFixture();
+  await event("human");
+  await signIn(alice);
+  await event("delay",new Date(Date.now()+86400000).toISOString());
+  assert.equal((await status()).job.reason,"human");
+  await signIn(bob);
+  await event("resume");
+  assert.equal((await status()).job.state,"scheduled");
+});
+
+test("J9 — le rôle interne lit uniquement les sources du tenant établi par la fonction",async()=>{
+  await db.exec("set local role daxenvo_followup_api");
+  await db.query("select set_config('daxenvo.followup_company',$1,true)",[a]);
+  assert.deepEqual((await db.query("select distinct company_id from public.quote_requests")).rows,[{company_id:a}]);
+  assert.deepEqual((await db.query("select distinct company_id from daxenvo_private.followup_job")).rows,[{company_id:a}]);
 });
