@@ -41,6 +41,7 @@ before(async () => {
   await db.exec(await sqlFile("../migrations/003b_qualification_writer_identity.sql"));
   await db.exec(await sqlFile("../migrations/003c_qualification_source_conflict.sql"));
   await db.exec(await sqlFile("../migrations/004_followup_automation.sql"));
+  await db.exec(await sqlFile("../migrations/005_appointment_booking.sql"));
   await db.exec(await sqlFile("./tenant-isolation.sql"));
   await db.query("insert into auth.users(id) values ($1), ($2), ($3)", [
     alice,
@@ -515,4 +516,75 @@ test("J9 — aucun paramètre personnalisé dans la définition des fonctions pr
     assert.ok(proconfig.includes("lock_timeout=3s"));
     assert.ok(proconfig.every(setting=>!setting.startsWith("daxenvo.")));
   }
+});
+
+async function bookingFixture() {
+  const binding=randomUUID(), key=createHash("sha256").update(randomUUID()).digest();
+  const {rows:[request]}=await db.query("select id from public.quote_requests where company_id=$1",[a]);
+  await db.query("insert into daxenvo_private.booking_calendar(company_id,binding,writer_digest) values($1,$2,$3)",[a,binding,key]);
+  async function command(command,fields={},user=bob,tenant=a,target=request.id) {
+    await signIn(user);
+    const message=JSON.stringify({purpose:"booking.v1",binding,command,fields,actor:user,company:tenant,request:target,expires:Math.floor(Date.now()/1000)+45});
+    const signature=createHmac("sha256",key).update(message).digest("hex");
+    return (await db.query("select public.booking_command($1,$2) as result",[message,signature])).rows[0].result;
+  }
+  const slot={operation:randomUUID(),title:"Visite fictive",zone:"Europe/Paris",start:"2030-05-15T12:00:00Z",minutes:30};
+  return {command,slot,request};
+}
+test("J10 — proposition, réservation unique, observation, déplacement et annulation",async()=>{
+  const {command,slot,request}=await bookingFixture();
+  // Enable J9 so the booking alone explains suppression, then retain an opposition on cancellation.
+  await signIn(bob);
+  await db.query("update followups set done=true where company_id=$1",[a]);
+  await db.query("select public.configure_followup_automation($1,24,6,2,10)",[a]);
+  await db.query("select public.followup_automation_event($1,$2,$3,'preference','email')",[a,request.id,randomUUID()]);
+  const {booking}=await command("propose",slot);
+  const {id}=booking;
+  assert.equal((await command("propose",slot)).booking.id,id);
+  assert.equal(booking.state,"proposed");
+  assert.equal((await command("reserve",{id})).dispatch,true);
+  assert.equal((await command("reserve",{id})).dispatch,false);
+  const proof={id,revision:2,status:"confirmed",reference:"provider/1",start:slot.start,minutes:30,updated:"2029-01-01T00:00:00Z"};
+  const first=(await command("observe",proof)).booking;
+  assert.equal(first.state,"confirmed");
+  const follow=async()=>(await db.query("select public.followup_automation_status($1,$2) as s",[a,request.id])).rows[0].s.job.reason;
+  assert.equal(await follow(),"confirmed_appointment");
+  assert.equal((await command("observe",proof)).booking.revision,first.revision);
+  const moved=(await command("observe",{...proof,revision:first.revision,start:"2030-05-16T12:00:00Z",reference:"provider/2",updated:"2029-01-02T00:00:00Z"})).booking;
+  assert.equal((await db.query("select starts_at from appointments where id=$1",[id])).rows[0].starts_at.toISOString(),"2030-05-16T12:00:00.000Z");
+  assert.equal((await command("observe",{...proof,revision:moved.revision})).booking.reference,"provider/2");
+  assert.equal((await db.query("delete from appointments where id=$1",[id])).affectedRows,0);
+  await db.query("select public.followup_automation_event($1,$2,$3,'opt_out')",[a,request.id,randomUUID()]);
+  const cancel=await command("cancel",{id});
+  assert.equal(cancel.dispatch,true);
+  assert.equal((await command("cancel",{id})).dispatch,false);
+  await command("observe",{...proof,revision:cancel.booking.revision,status:"cancelled",updated:"2029-01-03T00:00:00Z"});
+  assert.equal((await db.query("select id from appointments where id=$1",[id])).rows.length,0);
+  assert.equal(await follow(),"opt_out");
+});
+test("J10 — deux propositions incompatibles et slot protégé pendant une panne",async()=>{
+  const {command,slot}=await bookingFixture();
+  const {booking:b1}=await command("propose",slot);
+  const {booking:b2}=await command("propose",{...slot,operation:randomUUID(),start:"2030-05-15T12:15:00Z"});
+  await command("reserve",{id:b1.id});
+  const failure=await command("failure",{id:b1.id,revision:2,error:"CALENDAR_UNAVAILABLE",delay:30});
+  assert.equal(failure.booking.state,"error");
+  assert.equal((await command("reserve",{id:b1.id})).dispatch,false);
+  await assert.rejects(command("reserve",{id:b2.id}),{code:"PT409"});
+});
+test("J10 — un membre ne peut pas annuler",async()=>{
+  const {command,slot}=await bookingFixture();
+  const {booking}=await command("propose",slot,alice);
+  await assert.rejects(command("cancel",{id:booking.id},alice),{code:"42501"});
+});
+test("J10 — accès à une demande d’une autre entreprise refusé",async()=>{
+  const {command}=await bookingFixture();
+  const other=(await db.query("select id from quote_requests where company_id=$1",[b])).rows[0].id;
+  await assert.rejects(command("list",{},bob,a,other),{code:"PT404"});
+});
+test("J10 — les confirmations RPC directes non signées sont refusées",async()=>{
+  await bookingFixture();
+  await signIn(alice);
+  const msg=JSON.stringify({company:a,actor:alice,command:"observe",purpose:"booking.v1"});
+  await assert.rejects(db.query("select public.booking_command($1,$2)",[msg,"00".repeat(32)]),{code:"42501"});
 });
