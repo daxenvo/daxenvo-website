@@ -100,9 +100,13 @@ begin
     where company_id=tenant and request_id=target;
 end $$;
 
+-- Scope the RLS setting at runtime. Restore the caller's scope on every successful
+-- exit; PostgreSQL rolls back transaction-local changes when a statement fails.
 create function daxenvo_private.followup_source_changed() returns trigger
-language plpgsql security definer set search_path='' set lock_timeout='3s' set daxenvo.followup_company='' as $$
-declare target uuid;
+language plpgsql security definer set search_path='' set lock_timeout='3s' as $$
+declare
+  previous_company text := coalesce(current_setting('daxenvo.followup_company',true),'');
+  target uuid;
 begin
   perform set_config('daxenvo.followup_company',new.company_id::text,true);
   perform pg_advisory_xact_lock(hashtextextended(new.company_id::text,9));
@@ -116,6 +120,7 @@ begin
     target:=new.request_id;
   end if;
   perform daxenvo_private.evaluate_followup(new.company_id,target);
+  perform set_config('daxenvo.followup_company',previous_company,true);
   return new;
 end $$;
 create trigger followup_request after insert or update of status,prospect_id on public.quote_requests
@@ -125,7 +130,9 @@ create trigger followup_qualification after insert on public.request_qualificati
 -- An outstanding J8 reminder has precedence. Completing a manual task is not a delivery receipt.
 create index followup_open_request on public.followups(company_id,request_id) where not done;
 create function daxenvo_private.manual_followup_changed() returns trigger
-language plpgsql security definer set search_path='' set lock_timeout='3s' set daxenvo.followup_company='' as $$
+language plpgsql security definer set search_path='' set lock_timeout='3s' as $$
+declare
+  previous_company text := coalesce(current_setting('daxenvo.followup_company',true),'');
 begin
   perform set_config('daxenvo.followup_company',coalesce(new.company_id,old.company_id)::text,true);
   perform pg_advisory_xact_lock(hashtextextended(coalesce(new.company_id,old.company_id)::text,9));
@@ -135,6 +142,7 @@ begin
   if tg_op<>'DELETE' then
     perform daxenvo_private.evaluate_followup(new.company_id,new.request_id);
   end if;
+  perform set_config('daxenvo.followup_company',previous_company,true);
   return null;
 end $$;
 revoke all on function daxenvo_private.manual_followup_changed() from public,anon,authenticated;
@@ -152,8 +160,10 @@ begin
 end $$;
 
 create function daxenvo_private.configure_followup_automation(tenant uuid,delay_hours int,urgent_hours int,max_attempts int,batch_size int)
-returns void language plpgsql security definer set search_path='' set lock_timeout='3s' set daxenvo.followup_company='' as $$
-declare target uuid;
+returns void language plpgsql security definer set search_path='' set lock_timeout='3s' as $$
+declare
+  previous_company text := coalesce(current_setting('daxenvo.followup_company',true),'');
+  target uuid;
 begin
   perform set_config('daxenvo.followup_company',tenant::text,true);
   if daxenvo_private.followup_role(tenant) not in ('admin','owner') then raise insufficient_privilege; end if;
@@ -163,15 +173,19 @@ begin
       max_attempts=excluded.max_attempts,batch_size=excluded.batch_size
     where (followup_policy.delay_hours,followup_policy.urgent_hours,followup_policy.max_attempts,followup_policy.batch_size)
        is distinct from (excluded.delay_hours,excluded.urgent_hours,excluded.max_attempts,excluded.batch_size);
-  if not found then return; end if;
-  for target in select request_id from daxenvo_private.followup_job where company_id=tenant order by request_id loop
-    perform daxenvo_private.evaluate_followup(tenant,target);
-  end loop;
+  if found then
+    for target in select request_id from daxenvo_private.followup_job where company_id=tenant order by request_id loop
+      perform daxenvo_private.evaluate_followup(tenant,target);
+    end loop;
+  end if;
+  perform set_config('daxenvo.followup_company',previous_company,true);
 end $$;
 
 create function daxenvo_private.followup_automation_event(tenant uuid,target uuid,operation uuid,kind text,value text default null)
-returns void language plpgsql security definer set search_path='' set lock_timeout='3s' set daxenvo.followup_company='' as $$
-declare membership text; prospect uuid; affected uuid; event daxenvo_private.followup_event; until_at timestamptz;
+returns void language plpgsql security definer set search_path='' set lock_timeout='3s' as $$
+declare
+  previous_company text := coalesce(current_setting('daxenvo.followup_company',true),'');
+  membership text; prospect uuid; affected uuid; event daxenvo_private.followup_event; until_at timestamptz;
 begin
   perform set_config('daxenvo.followup_company',tenant::text,true);
   membership:=daxenvo_private.followup_role(tenant);
@@ -188,6 +202,7 @@ begin
   if not found then
     select * into strict event from daxenvo_private.followup_event where company_id=tenant and request_id=target and operation_id=operation;
     if (event.actor,event.kind,event.value) is distinct from ((nullif(current_setting('request.jwt.claims',true),'')::jsonb->>'sub')::uuid,kind,value) then raise exception using errcode='PT409',message='EVENT_CONFLICT'; end if;
+    perform set_config('daxenvo.followup_company',previous_company,true);
     return;
   end if;
   if kind in ('preference','opt_out') then
@@ -213,6 +228,7 @@ begin
       where company_id=tenant and request_id=target;
     perform daxenvo_private.evaluate_followup(tenant,target);
   end if;
+  perform set_config('daxenvo.followup_company',previous_company,true);
 end $$;
 
 -- Scheduler entry point. No network I/O. One tenant per transaction.
@@ -278,8 +294,10 @@ $$;
 revoke all on function daxenvo_private.prepared_followups(uuid) from public,anon,authenticated;
 
 create function daxenvo_private.followup_automation_status(tenant uuid,target uuid,before_id bigint default null)
-returns jsonb language plpgsql security definer set search_path='' set lock_timeout='3s' set daxenvo.followup_company='' as $$
-declare job daxenvo_private.followup_job; history jsonb;
+returns jsonb language plpgsql security definer set search_path='' set lock_timeout='3s' as $$
+declare
+  previous_company text := coalesce(current_setting('daxenvo.followup_company',true),'');
+  job daxenvo_private.followup_job; history jsonb;
 begin
   perform set_config('daxenvo.followup_company',tenant::text,true);
   perform daxenvo_private.followup_role(tenant);
@@ -288,6 +306,7 @@ begin
   select coalesce(jsonb_agg(to_jsonb(h) order by h.id desc),'[]'::jsonb) into history from
     (select id,state,reason,due_at,channel,happened_at from daxenvo_private.followup_history
      where company_id=tenant and request_id=target and (before_id is null or id<before_id) order by id desc limit 25) h;
+  perform set_config('daxenvo.followup_company',previous_company,true);
   return jsonb_build_object('job',to_jsonb(job),'history',history);
 end $$;
 

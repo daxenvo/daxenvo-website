@@ -481,3 +481,38 @@ test("J9 — le rôle interne lit uniquement les sources du tenant établi par l
   assert.deepEqual((await db.query("select distinct company_id from public.quote_requests")).rows,[{company_id:a}]);
   assert.deepEqual((await db.query("select distinct company_id from daxenvo_private.followup_job")).rows,[{company_id:a}]);
 });
+
+test("J9 — contexte RLS restauré après RPC, répétition, déclencheur et refus", async()=>{
+  const {id,status,configure,event}=await automationFixture();
+  await db.query("select set_config('daxenvo.followup_company',$1,true)",[b]);
+  const assertRestored=async()=>assert.equal((await db.query(
+    "select current_setting('daxenvo.followup_company') as tenant")).rows[0].tenant,b);
+  await status();
+  await assertRestored();
+  await configure(14);
+  await assertRestored();
+  await configure(14);
+  await assertRestored();
+  const op=randomUUID();
+  await event("human",null,op);
+  await assertRestored();
+  await event("human",null,op);
+  await assertRestored();
+  await db.query("update quote_requests set status='en_cours' where id=$1",[id]);
+  await assertRestored();
+  await db.query("update followups set done=false where request_id=$1",[id]);
+  await assertRestored();
+  await db.exec("savepoint denied");
+  await assert.rejects(db.query("select public.followup_automation_status($1,$2)",[b,id]),{code:"42501"});
+  await db.exec("rollback to denied");
+  await assertRestored();
+});
+test("J9 — aucun paramètre personnalisé dans la définition des fonctions privilégiées",async()=>{
+  const {rows}=await db.query(`select proconfig from pg_proc
+    where proowner='daxenvo_followup_api'::regrole and prosecdef`);
+  assert.equal(rows.length,5);
+  for (const {proconfig} of rows) {
+    assert.ok(proconfig.includes("lock_timeout=3s"));
+    assert.ok(proconfig.every(setting=>!setting.startsWith("daxenvo.")));
+  }
+});
