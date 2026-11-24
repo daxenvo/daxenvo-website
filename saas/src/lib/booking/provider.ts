@@ -7,7 +7,7 @@ export type Observation = Slot & {
 export interface CalendarProvider {
   slots(from: string, to: string): Promise<Slot[]>;
   reserve(id: string, slot: Slot, person: {name:string; email:string; zone:string}): Promise<string>;
-  observe(id: string, reference: string, linked: boolean): Promise<Observation>;
+  observe(id: string, reference: string, linked: boolean, matchesEmail: (email:string)=>boolean): Promise<Observation>;
   discover(id: string, start: string): Promise<string | null>;
   cancel(reference: string): Promise<void>;
 }
@@ -15,8 +15,10 @@ export interface CalendarProvider {
 export class CalendarError extends Error {
   readonly status: number;
   readonly retryAfter: number;
-  constructor(code: string, status = 503, retryAfter = 60) {
+  readonly rejected: boolean;
+  constructor(code: string, status = 503, retryAfter = 60, rejected = false) {
     super(code);
+    this.rejected = rejected;
     this.status = status;
     this.retryAfter = retryAfter;
   }
@@ -35,7 +37,7 @@ const event = z.object({
   start_time:instant, end_time:instant, updated_at:instant, status:z.enum(["active","canceled"]),
 });
 const invitee = z.object({
-  uri:z.string(), event:z.string(), status:z.enum(["active","canceled"]), updated_at:instant,
+  uri:z.string(), email:z.email(), event:z.string(), status:z.enum(["active","canceled"]), updated_at:instant,
   tracking:z.object({utm_content:z.string().nullable()}).nullable(), new_invitee:z.string().nullable(),
   reschedule_url:z.string().nullable(),
 });
@@ -59,9 +61,9 @@ export class Calendly implements CalendarProvider {
     }).catch(()=>{throw new CalendarError("CALENDAR_UNAVAILABLE")});
     if(response.status===429) {
       const retry=Number(response.headers.get("Retry-After"));
-      throw new CalendarError("CALENDAR_RATE_LIMIT",429,Number.isFinite(retry)?Math.max(60,Math.min(86400,retry)):60);
+      throw new CalendarError("CALENDAR_RATE_LIMIT",429,Number.isFinite(retry)?Math.max(60,Math.min(86400,retry)):60,true);
     }
-    if(!response.ok) throw new CalendarError(response.status===409?"SLOT_UNAVAILABLE":"CALENDAR_REJECTED",response.status===409?409:503);
+    if(!response.ok) throw new CalendarError(response.status===409?"SLOT_UNAVAILABLE":"CALENDAR_REJECTED",response.status===409?409:503,60,[400,401,403,404,409,422].includes(response.status));
     return response.status===204?{}:response.json();
   }
   private async typeInfo() {
@@ -92,13 +94,13 @@ export class Calendly implements CalendarProvider {
     inviteePath(resource.uri);
     return resource.uri;
   }
-  async observe(id:string,reference:string,linked:boolean):Promise<Observation> {
+  async observe(id:string,reference:string,linked:boolean,matchesEmail:(email:string)=>boolean):Promise<Observation> {
     // Follow only provider-returned successor links from an already verified predecessor.
     for(let depth=0;depth<4;depth++) {
       const path=inviteePath(reference), eventPath=path.split("/invitees/")[0];
       const [i,e]=await Promise.all([this.api(path),this.api(eventPath)]);
       const guest=invitee.parse(i.resource), meeting=event.parse(e.resource);
-      if(guest.uri!==reference || guest.event!==base+eventPath || meeting.uri!==guest.event ||
+      if(!matchesEmail(guest.email) || guest.uri!==reference || guest.event!==base+eventPath || meeting.uri!==guest.event ||
         meeting.event_type!==this.type || !meeting.event_memberships.some(m=>m.user===this.host) ||
         (!linked && guest.tracking?.utm_content!==id)) throw new CalendarError("UNRELATED_BOOKING",404);
       if(guest.new_invitee) {reference=guest.new_invitee;linked=true;continue}

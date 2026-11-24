@@ -524,7 +524,7 @@ async function bookingFixture() {
   await db.query("insert into daxenvo_private.booking_calendar(company_id,binding,writer_digest) values($1,$2,$3)",[a,binding,key]);
   async function command(command,fields={},user=bob,tenant=a,target=request.id) {
     await signIn(user);
-    const message=JSON.stringify({purpose:"booking.v1",binding,command,fields,actor:user,company:tenant,request:target,expires:Math.floor(Date.now()/1000)+45});
+    const message=JSON.stringify({purpose:"booking.v1",binding,command,fields:command==="reserve"?{invitee_hash:"01".repeat(32),...fields}:fields,actor:user,company:tenant,request:target,expires:Math.floor(Date.now()/1000)+45});
     const signature=createHmac("sha256",key).update(message).digest("hex");
     return (await db.query("select public.booking_command($1,$2) as result",[message,signature])).rows[0].result;
   }

@@ -14,7 +14,8 @@ create table daxenvo_private.bookings (
   company_id uuid not null references daxenvo_private.booking_calendar on delete restrict,
   request_id uuid not null, binding uuid not null, title text not null check(length(title) between 2 and 160),
   starts_at timestamptz not null, duration_minutes int not null check(duration_minutes between 15 and 240),
-  zone text not null, state text not null check(state in ('proposed','pending','confirmed','cancelled','error')),
+  proposed_start timestamptz not null, proposed_minutes int not null,
+  invitee_hash text, rejected boolean not null default false, zone text not null, state text not null check(state in ('proposed','pending','confirmed','cancelled','error')),
   reference text unique, observed_at timestamptz, revision int not null default 1,
   cancel_requested boolean not null default false, failures int not null default 0, last_error text, retry_at timestamptz,
   unique(company_id,operation),
@@ -68,7 +69,7 @@ begin
   if tg_op='UPDATE' and old.prospect_id=new.prospect_id then return new; end if;
   perform pg_advisory_xact_lock(hashtextextended(old.company_id::text,9));
   if exists(select from daxenvo_private.bookings where company_id=old.company_id and request_id=old.id
-    and state in ('pending','confirmed','error')) then
+    and not rejected and state in ('pending','confirmed','error')) then
     raise exception using errcode='23503', message='ACTIVE_BOOKING';
   end if;
   if tg_op='DELETE' then return old; end if;
@@ -82,7 +83,7 @@ create function daxenvo_private.booking_slot_guard() returns trigger language pl
 begin
   if new.provider_managed then return new; end if;
   perform pg_advisory_xact_lock(hashtextextended(new.company_id::text,9));
-  if exists(select from daxenvo_private.bookings b where b.company_id=new.company_id and b.state in ('pending','confirmed','error')
+  if exists(select from daxenvo_private.bookings b where b.company_id=new.company_id and not b.rejected and b.state in ('pending','confirmed','error')
     and b.starts_at < new.starts_at+make_interval(mins=>new.duration_minutes)
     and new.starts_at < b.starts_at+make_interval(mins=>b.duration_minutes)) then
     raise exception using errcode='23503',message='SLOT_UNAVAILABLE';
@@ -141,33 +142,54 @@ begin
   perform pg_advisory_xact_lock(hashtextextended(tenant::text,9));
   if not exists(select from public.quote_requests where company_id=tenant and id=target) then
     raise exception using errcode='PT404',message='NOT_FOUND'; end if;
-  if cmd not in ('read','observe','failure') then
+  if cmd not in ('read','observe','failure','cooldown') then
     update daxenvo_private.booking_calendar set minute_start=date_trunc('minute',t),
       minute_used=case when minute_start=date_trunc('minute',t) then minute_used+1 else 1 end
       where company_id=tenant and (minute_start is distinct from date_trunc('minute',t) or minute_used<per_minute)
       and (blocked_until is null or blocked_until<=t);
     if not found then raise exception using errcode='PT429',message='CALENDAR_RATE_LIMIT'; end if;
   end if;
-  if cmd='availability' then return '{}'::jsonb; end if;
+  if cmd='cooldown' then
+    update daxenvo_private.booking_calendar set blocked_until=greatest(blocked_until,t+make_interval(secs=>greatest(60,least(86400,(fields->>'delay')::int)))) where company_id=tenant;
+    return '{}'::jsonb;
+  end if;
+  if cmd='availability' then
+    return (select coalesce(jsonb_agg(to_jsonb(busy)),'[]') from
+      (select starts_at,duration_minutes from public.appointments where company_id=tenant
+       union all select starts_at,duration_minutes from daxenvo_private.bookings where company_id=tenant
+         and state in ('pending','error') and not rejected) busy
+      where starts_at<(fields->>'to')::timestamptz and starts_at+make_interval(mins=>duration_minutes)>(fields->>'from')::timestamptz);
+  end if;
   if cmd='list' then
     return (select coalesce(jsonb_agg(to_jsonb(page) order by id),'[]') from
       (select * from daxenvo_private.bookings where company_id=tenant and request_id=target
         and (fields->>'after' is null or id>(fields->>'after')::uuid) order by id limit 25) page);
   end if;
+  if cmd='proposal' then
+    select * into b from daxenvo_private.bookings where company_id=tenant and operation=(fields->>'operation')::uuid;
+    if not found then return 'null'::jsonb; end if;
+    if (b.request_id,b.title,b.proposed_start,b.zone) is distinct from
+      (target,fields->>'title',(fields->>'start')::timestamptz,fields->>'zone') then
+      raise exception using errcode='PT409',message='OPERATION_CONFLICT'; end if;
+    return to_jsonb(b);
+  end if;
   if cmd='propose' then
-    insert into daxenvo_private.bookings(operation,company_id,request_id,binding,title,starts_at,duration_minutes,zone,state)
+    insert into daxenvo_private.bookings(operation,company_id,request_id,binding,title,starts_at,duration_minutes,proposed_start,proposed_minutes,zone,state)
       values((fields->>'operation')::uuid,tenant,target,cfg.binding,fields->>'title',(fields->>'start')::timestamptz,
-        (fields->>'minutes')::int,fields->>'zone','proposed') on conflict(company_id,operation) do nothing;
+        (fields->>'minutes')::int,(fields->>'start')::timestamptz,(fields->>'minutes')::int,fields->>'zone','proposed') on conflict(company_id,operation) do nothing;
     select * into strict b from daxenvo_private.bookings where company_id=tenant and operation=(fields->>'operation')::uuid;
-    if (b.request_id,b.title,b.starts_at,b.duration_minutes,b.zone) is distinct from
+    if (b.request_id,b.title,b.proposed_start,b.proposed_minutes,b.zone) is distinct from
       (target,fields->>'title',(fields->>'start')::timestamptz,(fields->>'minutes')::int,fields->>'zone') then
       raise exception using errcode='PT409',message='OPERATION_CONFLICT'; end if;
   else
     select * into b from daxenvo_private.bookings where company_id=tenant and request_id=target and id=(fields->>'id')::uuid;
     if not found then raise exception using errcode='PT404',message='NOT_FOUND'; end if;
     if b.binding<>cfg.binding then raise exception using errcode='PT409',message='CALENDAR_CHANGED'; end if;
+    if cmd='reserve' and (coalesce(fields->>'invitee_hash','') !~ '^[a-f0-9]{64}$' or
+      (b.invitee_hash is not null and b.invitee_hash<>fields->>'invitee_hash')) then
+      raise exception using errcode='PT409',message='INVITEE_CONFLICT'; end if;
     if cmd='reserve' and b.state='proposed' then
-      if b.starts_at<=t or exists(select from daxenvo_private.bookings x where x.company_id=tenant and x.state in ('confirmed','pending','error')
+      if b.starts_at<=t or exists(select from daxenvo_private.bookings x where x.company_id=tenant and not x.rejected and x.state in ('confirmed','pending','error')
         and x.starts_at<b.starts_at+make_interval(mins=>b.duration_minutes) and b.starts_at<x.starts_at+make_interval(mins=>x.duration_minutes))
         or exists(select from public.appointments x where x.company_id=tenant and x.starts_at<b.starts_at+make_interval(mins=>b.duration_minutes)
         and b.starts_at<x.starts_at+make_interval(mins=>x.duration_minutes)) then
@@ -175,12 +197,13 @@ begin
       update daxenvo_private.booking_calendar set day_start=case when day_start>t-interval '24 hours' then day_start else t end,day_used=case when day_start>t-interval '24 hours' then day_used+1 else 1 end
         where company_id=tenant and (day_start is null or day_start<=t-interval '24 hours' or day_used<daily_creates);
       if not found then raise exception using errcode='PT429',message='BOOKING_LIMIT'; end if;
-      update daxenvo_private.bookings set state='pending',revision=revision+1 where id=b.id returning * into b;
+      update daxenvo_private.bookings set state='pending',invitee_hash=fields->>'invitee_hash',revision=revision+1 where id=b.id returning * into b;
       dispatched:=true;
     elsif cmd in ('observe','failure') then
-      if b.revision=(fields->>'revision')::int and b.state in ('confirmed','pending','error') then
+      if b.revision=(fields->>'revision')::int and (b.state in ('confirmed','pending','error') or (b.state='cancelled' and b.reference is not null)) then
         if cmd='failure' then
           update daxenvo_private.bookings set state=case when state='pending' then 'error' else state end,
+            rejected=rejected or (reference is null and coalesce((fields->>'rejected')::boolean,false)),
             last_error=left(fields->>'error',64),failures=failures+1,revision=revision+1,
             retry_at=t+make_interval(secs=>greatest(15,least(86400,(fields->>'delay')::int))) where id=b.id returning * into b;
           if b.last_error='CALENDAR_RATE_LIMIT' then
@@ -188,25 +211,30 @@ begin
           end if;
         else
           observed:=(fields->>'updated')::timestamptz;
-          if b.observed_at is null or observed>=b.observed_at then
+          if (b.observed_at is null or observed>=b.observed_at) and not
+            (b.state='cancelled' and fields->>'status'='confirmed' and fields->>'reference'=b.reference) then
             if fields->>'status' not in ('confirmed','cancelled') or nullif(fields->>'reference','') is null or observed is null then
               raise invalid_parameter_value; end if;
             update daxenvo_private.bookings set state=fields->>'status',reference=fields->>'reference',
+              cancel_requested=case when reference is distinct from fields->>'reference' or fields->>'status'='cancelled'
+                or fields->>'recovery'='true' then false else cancel_requested end,
               starts_at=(fields->>'start')::timestamptz,duration_minutes=(fields->>'minutes')::int,observed_at=observed,
-              failures=0,last_error=null,retry_at=null,revision=revision+1 where id=b.id and
+              failures=0,last_error=null,retry_at=null,revision=revision+1 where id=b.id and ((cancel_requested and fields->>'recovery'='true') or
               (state,reference,starts_at,duration_minutes,observed_at,last_error) is distinct from
-              (fields->>'status',fields->>'reference',(fields->>'start')::timestamptz,(fields->>'minutes')::int,observed,null::text);
+              (fields->>'status',fields->>'reference',(fields->>'start')::timestamptz,(fields->>'minutes')::int,observed,null::text));
             select * into strict b from daxenvo_private.bookings where id=(fields->>'id')::uuid;
           end if;
         end if;
       end if;
     elsif cmd in ('sync','cancel','reschedule','recover') then
-      if b.state='proposed' and cmd='cancel' then
+      if (b.state='proposed' or b.rejected) and cmd='cancel' then
         update daxenvo_private.bookings set state='cancelled',revision=revision+1 where id=b.id returning * into b;
       elsif b.state not in ('confirmed','pending','error','cancelled') then
         raise exception using errcode='PT409',message='NOT_RESERVED';
       elsif b.state<>'cancelled' and (b.retry_at>t or (b.failures>=5 and cmd<>'recover')) then
         raise exception using errcode='PT429',message='RECONCILIATION_DEFERRED';
+      elsif cmd='cancel' and b.state in ('pending','error') then
+        raise exception using errcode='PT409',message='RECONCILE_FIRST';
       elsif cmd='cancel' and b.state='confirmed' and not b.cancel_requested then
         update daxenvo_private.bookings set cancel_requested=true,revision=revision+1 where id=b.id returning * into b;
         dispatched:=true;
