@@ -34,6 +34,9 @@ before(async () => {
   ]) {
     await db.exec(await sqlFile("../migrations/" + file));
   }
+  // Hosted Supabase reserves GRANT on auth to its managed schema owner.
+  await db.exec("revoke usage on schema auth from daxenvo_qualification_writer");
+  await db.exec(await sqlFile("../migrations/003b_qualification_writer_identity.sql"));
   await db.exec(await sqlFile("./tenant-isolation.sql"));
   await db.query("insert into auth.users(id) values ($1), ($2), ($3)", [
     alice,
@@ -263,4 +266,11 @@ test("Une opération signée ne peut enregistrer deux révisions", async () => {
   const nonce = randomUUID();
   await write({nonce});
   await assert.rejects(write({nonce}), {code:"23505"});
+});
+
+test("Le rôle de persistance utilise le JWT sans accès au schéma Auth géré", async () => {
+  const privileges = await db.query("select has_schema_privilege('daxenvo_qualification_writer','auth','usage') as usage");
+  assert.equal(privileges.rows[0].usage, false);
+  const {write} = await qualificationFixture();
+  assert.equal((await write()).rows[0].created_by, alice);
 });
