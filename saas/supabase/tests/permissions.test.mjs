@@ -3,7 +3,9 @@ import { before, after, beforeEach, afterEach, test } from "node:test";
 import { readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
 
-const db = new PGlite();
+import { pgcrypto } from "@electric-sql/pglite/contrib/pgcrypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
+const db = new PGlite({extensions: {pgcrypto}});
 const sqlFile = (path) => readFile(new URL(path, import.meta.url), "utf8");
 const a = "20000000-0000-4000-8000-000000000001";
 const b = "20000000-0000-4000-8000-000000000002";
@@ -14,6 +16,8 @@ const outsider = "10000000-0000-4000-8000-000000000003";
 before(async () => {
   // Seule l'identité Auth est simulée. PostgreSQL applique privilèges, RLS et contraintes.
   await db.exec(`
+    create schema extensions;
+    create extension pgcrypto with schema extensions;
     create role anon;
     create role authenticated;
     create schema auth;
@@ -197,8 +201,17 @@ async function qualificationFixture() {
     row,
     write: (overrides = {}) => {
       const args = { company: b, id: row.id, source: row.source, result: ruleResult, writer: testWriter, ...overrides };
-      return db.query("select * from record_request_qualification($1,$2,$3,$4,$5)",
-        [args.company,args.id,JSON.stringify(args.source),JSON.stringify(args.result),args.writer]);
+      const hash = v => createHash("sha256").update(String(v)).digest("hex");
+      const source = args.source;
+      const fingerprint = hash([source.description, source.project_type, source.city,
+        source.budget, source.requested_timeline].map(hash).join(""));
+      const msg = JSON.stringify({purpose:"daxenvo.qualification.v1",actor:alice,
+        company:args.company, request:args.id, nonce:args.nonce ?? randomUUID(),
+        expires:args.expires ?? Math.floor(Date.now()/1000)+45,source:fingerprint,result:args.result});
+      const key = createHash("sha256").update(args.writer).digest();
+      return db.query("select * from record_request_qualification($1,$2)", [
+        args.tamper ? msg.replace("Calendrier à préciser","Falsifié") : msg,
+        createHmac("sha256", key).update(msg).digest("hex")]);
     },
   };
 }
@@ -228,6 +241,8 @@ for (const [label, command] of [
 }
 for (const [label, changes, code] of [
   ["secret incorrect",{writer:"00".repeat(32)},"42501"],
+  ["signature altérée",{tamper:true},"42501"],
+  ["autorisation expirée",{expires:1},"42501"],
   ["source modifiée",{source:{}},"40001"],
   ["entreprise incohérente",{company:a},"P0002"],
   ["provenance falsifiée",{result:{...ruleResult,analysePar:"ia"}},"23514"],
@@ -241,4 +256,11 @@ test("Identité sans adhésion refusée même avec le secret serveur", async () 
   const {write} = await qualificationFixture();
   await signIn(bob);
   await assert.rejects(write(), {code:"42501"});
+});
+
+test("Une opération signée ne peut enregistrer deux révisions", async () => {
+  const {write} = await qualificationFixture();
+  const nonce = randomUUID();
+  await write({nonce});
+  await assert.rejects(write({nonce}), {code:"23505"});
 });

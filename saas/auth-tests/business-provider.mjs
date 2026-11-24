@@ -1,11 +1,14 @@
 // PostgREST double for route tests. Tenant isolation must come from the route's filters.
-import { randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 const tables = new Map([["prospects", new Map()], ["quote_requests", new Map()], ["followups", new Map()], ["appointments", new Map()], ["request_qualifications", new Map()]]);
 
 export function businessReply(request, url, input, reply, actor) {
   if (url.pathname === "/rest/v1/rpc/record_request_qualification") {
-    const {p_company, p_request, p_result, p_writer} = input;
-    if (p_writer !== process.env.QUALIFICATION_WRITER_TOKEN) return reply(403, {code: "42501"});
+    const key = createHash("sha256").update(process.env.QUALIFICATION_WRITER_TOKEN).digest();
+    if (createHmac("sha256", key).update(input.p_message).digest("hex") !== input.p_signature)
+      return reply(403, {code: "42501"});
+    const {company: p_company, request: p_request, result: p_result, actor: signer} = JSON.parse(input.p_message);
+    if (signer !== actor) return reply(403, {code: "42501"});
     const row = tables.get("quote_requests").get(p_request);
     if (!row || row.company_id !== p_company) return reply(404, {code: "P0002"});
     const history = tables.get("request_qualifications");

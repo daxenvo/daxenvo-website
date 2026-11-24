@@ -62,7 +62,7 @@ export async function businessAccess(request: NextRequest, session: ReturnType<t
   const client = session.client();
   const user = await verifiedUser(client);
   const active = selectCompany(await memberships(client, user.id), request.cookies.get(activeCompanyCookie)?.value);
-  return {client, active};
+  return {client, active, user};
 }
 
 export async function handle(request: NextRequest, resource: Resource, id?: string) {

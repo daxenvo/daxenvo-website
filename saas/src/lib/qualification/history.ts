@@ -1,4 +1,5 @@
 import "server-only";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { creerServiceQualification } from "../../../../j6/service.server.mjs";
@@ -27,7 +28,7 @@ export async function qualifications(request: NextRequest, id: string, latest = 
   const session = responseSession(request);
   const json = (value: unknown, status = 200) => session.finish(NextResponse.json(value, {status}));
   try {
-    const {client, active} = await businessAccess(request, session);
+    const {client, active, user} = await businessAccess(request, session);
     const company = active.company_id;
     z.uuid().parse(id);
     const write = request.method === "POST";
@@ -67,8 +68,15 @@ export async function qualifications(request: NextRequest, id: string, latest = 
         delai: source.requested_timeline,
       }, { tenantId: company }));
       if (!result.success) throw new ApiError(503, "UNAVAILABLE");
+      const hash = (value: string) => createHash("sha256").update(value).digest("hex");
+      const fingerprint = hash([source.description, source.project_type, source.city,
+        String(source.budget), source.requested_timeline].map(hash).join(""));
+      const message = JSON.stringify({purpose: "daxenvo.qualification.v1", actor: user.id,
+        company, request: id, nonce: randomUUID(), expires: Math.floor(Date.now() / 1000) + 45,
+        source: fingerprint, result: result.data});
+      const key = createHash("sha256").update(writer).digest();
       const saved = await client.rpc("record_request_qualification", {
-        p_company: company, p_request: id, p_source: source, p_result: result.data, p_writer: writer,
+        p_message: message, p_signature: createHmac("sha256", key).update(message).digest("hex"),
       }).single();
       if (saved.error?.code === "P0002") throw new ApiError(404, "NOT_FOUND");
       if (saved.error?.code === "40001") throw new ApiError(409, "SOURCE_CHANGED");
