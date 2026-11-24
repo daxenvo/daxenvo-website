@@ -38,6 +38,7 @@ before(async () => {
   await db.exec("revoke usage on schema auth from daxenvo_qualification_writer");
   await db.exec(await sqlFile("../migrations/003b_qualification_writer_identity.sql"));
   await db.exec(await sqlFile("../migrations/003c_qualification_source_conflict.sql"));
+  await db.exec(await sqlFile("../migrations/004_followup_automation.sql"));
   await db.exec(await sqlFile("./tenant-isolation.sql"));
   await db.query("insert into auth.users(id) values ($1), ($2), ($3)", [
     alice,
@@ -286,3 +287,100 @@ test("Une modification après lecture refuse le résultat signé sans ajouter de
   const history = await db.query("select revision from request_qualifications where request_id = $1", [row.id]);
   assert.deepEqual(history.rows, [{revision: 1}]);
 });
+
+async function automationFixture() {
+  const {rows:[request]}=await db.query("select * from quote_requests where company_id=$1",[a]);
+  const id=request.id;
+  const event=(kind,value=null,key=randomUUID())=>db.query(
+    "select public.followup_automation_event($1,$2,$3,$4,$5)",[a,id,key,kind,value]);
+  const configure=(delay=12,max=2)=>db.query(
+    "select public.configure_followup_automation($1,$2,1,$3,1)",[a,delay,max]);
+  const status=async()=> (await db.query(
+    "select public.followup_automation_status($1,$2) as snapshot",[a,id])).rows[0].snapshot;
+  await signIn(bob);
+  await configure();
+  await event("preference","email");
+  return {id,event,configure,status};
+}
+test("J9 — délai, échéance, préparation unique et accusé réservé au fournisseur",async()=>{
+  const {id,status,configure}=await automationFixture();
+  const first=await status();
+  assert.equal(first.job.state,"scheduled");
+  await configure(24);
+  assert.equal(Date.parse((await status()).job.due_at)-Date.parse(first.job.due_at),12*3600000);
+  await db.exec("reset role");
+  await db.query("update quote_requests set created_at=now()-interval '2 days' where id=$1",[id]);
+  await db.query("update daxenvo_private.followup_job set due_at=now() where request_id=$1",[id]);
+  const tick=()=>db.query("select daxenvo_private.run_followups($1) as n",[a]);
+  assert.equal((await tick()).rows[0].n,1);
+  assert.equal((await tick()).rows[0].n,0);
+  const prepared=await status();
+  assert.equal(prepared.job.state,"prepared");
+  assert.equal(prepared.job.sent_count,0);
+  await configure(24,1);
+  const ack=()=>db.query("select daxenvo_private.confirm_followup_delivery($1,$2,$3,'fixture-receipt')",[a,id,prepared.history[0].id]);
+  await ack(); await ack();
+  const final=await status();
+  assert.equal(final.job.sent_count,1);
+  assert.equal(final.job.reason,"limit");
+  assert.equal(final.history.filter(h=>h.state==="sent").length,1);
+});
+test("J9 — réponses, suspension, reprise et événements idempotents",async()=>{
+  const {event,status}=await automationFixture();
+  for(const kind of ["interested","information","appointment","human","pause"]){
+    await event(kind);
+    assert.equal((await status()).job.state,"cancelled");
+    await event("resume");
+    assert.equal((await status()).job.state,"scheduled");
+  }
+  const until=new Date(Date.now()+96*3600000).toISOString();
+  const key=randomUUID();
+  await event("delay",until,key);
+  const first=await status();
+  assert.equal(Date.parse(first.job.due_at),Date.parse(until));
+  await event("delay",until,key);
+  assert.deepEqual(await status(),first);
+  await event("refused"); await event("resume"); await event("contact");
+  assert.equal((await status()).job.reason,"refused");
+});
+test("J9 — opposition du prospect sur toutes ses demandes et annulation terminale",async()=>{
+  const {id,event,status}=await automationFixture();
+  for(const terminal of ["gagnee","perdue"]){
+    await db.query("update quote_requests set status=$1 where id=$2",[terminal,id]);
+    assert.equal((await status()).job.reason,terminal);
+  }
+  const other=(await db.query("insert into quote_requests(company_id,prospect_id,title,description) select company_id,prospect_id,title,description from quote_requests where id=$1 returning id",[id])).rows[0].id;
+  const snapshot=async()=>(await db.query("select public.followup_automation_status($1,$2) as s",[a,other])).rows[0].s;
+  await event("opt_out"); await event("preference","phone"); await event("resume");
+  assert.equal((await snapshot()).job.reason,"opt_out");
+  assert.equal((await status()).job.reason,"opt_out");
+});
+test("J9 — panne du traitement conservée et reprise après échéance",async()=>{
+  const {id,status}=await automationFixture();
+  await db.exec(`reset role;
+    create function pg_temp.fail_schedule() returns trigger language plpgsql as $$
+    begin if new.state='scheduled' then raise exception 'fixture'; end if; return new; end $$;
+    create trigger fault before update on daxenvo_private.followup_job for each row execute function pg_temp.fail_schedule();`);
+  await db.query("update daxenvo_private.followup_job set state='pending',due_at=null where request_id=$1",[id]);
+  const tick=()=>db.query("select daxenvo_private.run_followups($1)",[a]);
+  await tick();
+  assert.equal((await status()).job.state,"error");
+  assert.equal((await status()).job.reason,"P0001");
+  await db.exec("drop trigger fault on daxenvo_private.followup_job");
+  await db.query("update daxenvo_private.followup_job set due_at=now() where request_id=$1",[id]);
+  await tick();
+  assert.equal((await status()).job.state,"scheduled");
+});
+for(const [name,action] of Object.entries({
+  anonymous:async({id})=>{await db.exec("set local role anon");return db.query("select public.followup_automation_status($1,$2)",[a,id])},
+  outsider:async({id})=>{await signIn(outsider);return db.query("select public.followup_automation_status($1,$2)",[a,id])},
+  tenant:async({id})=>db.query("select public.followup_automation_status($1,$2)",[b,id]),
+  memberSettings:async({configure})=>{await signIn(alice);return configure()},
+  memberResume:async({event})=>{await signIn(alice);return event("resume")},
+  fakeDelivery:async({id})=>db.query("select daxenvo_private.confirm_followup_delivery($1,$2,1,'fake')",[a,id]),
+})){
+  test("J9 — refus "+name,async()=>{
+    const fixture=await automationFixture();
+    await assert.rejects(action(fixture),{code:"42501"});
+  });
+}
