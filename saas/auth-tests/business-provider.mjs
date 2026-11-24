@@ -29,6 +29,11 @@ export function businessReply(request, url, input, reply, actor) {
     history.set(saved.id, saved);
     return reply(200, saved);
   }
+  if (url.pathname === "/rest/v1/rpc/followup_automation_status") {
+    const row = tables.get("quote_requests").get(input.target);
+    if (!row || row.company_id !== input.tenant) return reply(404, {code:"P0002"});
+    return reply(200,{job:{company_id:row.company_id,request_id:row.id},history:[]});
+  }
   const table = tables.get(url.pathname.split("/").pop());
   if (!table) return reply(404, {});
   const params = url.searchParams;

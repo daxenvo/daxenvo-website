@@ -71,7 +71,8 @@ declare
 begin
   select * into job from daxenvo_private.followup_job where company_id=tenant and request_id=target for update;
   if not found then return; end if;
-  select * into strict req from public.quote_requests where company_id=tenant and id=target;
+  select * into req from public.quote_requests where company_id=tenant and id=target;
+  if not found then return; end if;
   select * into policy from daxenvo_private.followup_policy where company_id=tenant;
   select * into contact from daxenvo_private.followup_contact where company_id=tenant and prospect_id=req.prospect_id;
   select result into qualification from public.request_qualifications where company_id=tenant and request_id=target
@@ -84,6 +85,7 @@ begin
     when job.response in ('interested','information','appointment','human') then job.response
     when (qualification->>'requiresHumanReview')::boolean then 'qualification_review'
     when policy.company_id is null then 'not_configured'
+    when exists(select from public.followups f where f.company_id=tenant and f.request_id=target and not f.done) then 'manual_followup'
     when job.sent_count >= policy.max_attempts then 'limit'
     when contact.channel is null then 'contact_preference_required'
   end;
@@ -106,6 +108,9 @@ begin
   if tg_table_name='quote_requests' then
     target:=new.id;
     insert into daxenvo_private.followup_job(company_id,request_id) values(new.company_id,target) on conflict do nothing;
+    if tg_op='UPDATE' and new.prospect_id is distinct from old.prospect_id then
+      update daxenvo_private.followup_job set paused=true where company_id=new.company_id and request_id=target;
+    end if;
   else
     target:=new.request_id;
   end if;
@@ -116,6 +121,23 @@ create trigger followup_request after insert or update of status,prospect_id on 
   for each row execute function daxenvo_private.followup_source_changed();
 create trigger followup_qualification after insert on public.request_qualifications
   for each row execute function daxenvo_private.followup_source_changed();
+-- An outstanding J8 reminder has precedence. Completing a manual task is not a delivery receipt.
+create index followup_open_request on public.followups(company_id,request_id) where not done;
+create function daxenvo_private.manual_followup_changed() returns trigger
+language plpgsql security definer set search_path='' as $$
+begin
+  perform pg_advisory_xact_lock(hashtextextended(coalesce(new.company_id,old.company_id)::text,9));
+  if tg_op='DELETE' or (tg_op='UPDATE' and old.request_id<>new.request_id) then
+    perform daxenvo_private.evaluate_followup(old.company_id,old.request_id);
+  end if;
+  if tg_op<>'DELETE' then
+    perform daxenvo_private.evaluate_followup(new.company_id,new.request_id);
+  end if;
+  return null;
+end $$;
+revoke all on function daxenvo_private.manual_followup_changed() from public,anon,authenticated;
+create trigger followup_manual after insert or update of request_id,done or delete on public.followups
+  for each row execute function daxenvo_private.manual_followup_changed();
 insert into daxenvo_private.followup_job(company_id,request_id) select company_id,id from public.quote_requests;
 
 create function daxenvo_private.followup_role(tenant uuid) returns text
@@ -234,6 +256,20 @@ begin
   perform daxenvo_private.evaluate_followup(tenant,target);
 end $$;
 revoke all on function daxenvo_private.confirm_followup_delivery(uuid,uuid,bigint,text) from public,anon,authenticated;
+
+-- Provider-neutral handoff. No credentials, addresses or transport are materialized.
+create function daxenvo_private.prepared_followups(tenant uuid)
+returns table(preparation_id bigint, request_id uuid, prospect_id uuid, channel text)
+language sql stable set search_path='' as $$
+  select decision.id,j.request_id,r.prospect_id,j.channel
+  from daxenvo_private.followup_job j
+  join public.quote_requests r on (r.company_id,r.id)=(j.company_id,j.request_id)
+  cross join lateral (select h.id from daxenvo_private.followup_history h
+    where h.company_id=j.company_id and h.request_id=j.request_id order by h.id desc limit 1) decision
+  where j.company_id=tenant and j.state='prepared'
+  order by j.due_at,j.request_id limit (select p.batch_size from daxenvo_private.followup_policy p where p.company_id=tenant)
+$$;
+revoke all on function daxenvo_private.prepared_followups(uuid) from public,anon,authenticated;
 
 create function public.followup_automation_status(tenant uuid,target uuid,before_id bigint default null)
 returns jsonb language plpgsql stable security definer set search_path='' as $$

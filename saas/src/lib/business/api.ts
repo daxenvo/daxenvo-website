@@ -26,7 +26,7 @@ export function checkDatabase(error: { code: string } | null, status: number) {
   throw new ApiError(503, "UNAVAILABLE");
 }
 
-async function readBody(request: NextRequest) {
+export async function readBody(request: NextRequest) {
   if (request.headers.get("content-type")?.split(";")[0].trim() !== "application/json")
     throw new ApiError(415, "JSON_REQUIRED");
   const reader = request.body?.getReader();

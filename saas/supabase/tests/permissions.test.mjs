@@ -298,6 +298,7 @@ async function automationFixture() {
   const status=async()=> (await db.query(
     "select public.followup_automation_status($1,$2) as snapshot",[a,id])).rows[0].snapshot;
   await signIn(bob);
+  await db.query("update followups set done=true where company_id=$1",[a]);
   await configure();
   await event("preference","email");
   return {id,event,configure,status};
@@ -384,3 +385,47 @@ for(const [name,action] of Object.entries({
     await assert.rejects(action(fixture),{code:"42501"});
   });
 }
+test("J9 — priorité, revue humaine et rôle owner", async()=>{
+  const {row,write}=await qualificationFixture();
+  await db.query("update followups set done=true where company_id=$1",[b]);
+  await db.query("select public.configure_followup_automation($1,48,2,3,10)",[b]);
+  await db.query("select public.followup_automation_event($1,$2,$3,'preference','sms')",[b,row.id,randomUUID()]);
+  const state=async()=>(await db.query("select public.followup_automation_status($1,$2) as s",[b,row.id])).rows[0].s.job;
+  const normal=await state();
+  await write({result:{...ruleResult,priorite:"elevee",requiresHumanReview:false}});
+  assert.equal(Date.parse(normal.due_at)-Date.parse((await state()).due_at),46*3600000);
+  await write();
+  assert.equal((await state()).reason,"qualification_review");
+});
+test("J9 — une préparation obsolète ne peut pas être confirmée", async()=>{
+  const {id,status,configure,event}=await automationFixture();
+  await db.exec("reset role");
+  await db.query("update quote_requests set created_at=now()-interval '3 days' where id=$1",[id]);
+  await configure(2);
+  const prepared=(await db.query("select * from daxenvo_private.prepared_followups($1)",[a])).rows;
+  assert.equal(prepared.length,1);
+  assert.equal(prepared[0].channel,"email");
+  await event("opt_out");
+  assert.equal((await status()).job.sent_count,0);
+  assert.deepEqual((await db.query("select * from daxenvo_private.prepared_followups($1)",[a])).rows,[]);
+  await assert.rejects(db.query("select daxenvo_private.confirm_followup_delivery($1,$2,$3,'fixture')",[a,id,prepared[0].preparation_id]),{code:"PT409"});
+});
+test("J9 — appels simultanés au worker, un seul passage et une seule préparation",async()=>{
+  const {id,status}=await automationFixture();
+  await db.exec("reset role");
+  await db.query("update quote_requests set created_at=now()-interval '3 days' where id=$1",[id]);
+  await db.query("update daxenvo_private.followup_job set due_at=now() where request_id=$1",[id]);
+  // PGlite serializes SQL on one connection; native lock contention is a separate check.
+  const calls=await Promise.all(Array.from({length:4},()=>db.query("select daxenvo_private.run_followups($1) as n",[a])));
+  assert.equal(calls.reduce((total,result)=>total+result.rows[0].n,0),1);
+  assert.equal((await status()).history.filter(h=>h.state==="prepared").length,1);
+});
+
+test("J9 — une relance manuelle ouverte prend la main, sa clôture ne compte pas comme envoi", async()=>{
+  const {status}=await automationFixture();
+  await db.query("update followups set done=false where company_id=$1",[a]);
+  assert.equal((await status()).job.reason,"manual_followup");
+  await db.query("update followups set done=true where company_id=$1",[a]);
+  assert.equal((await status()).job.state,"scheduled");
+  assert.equal((await status()).job.sent_count,0);
+});

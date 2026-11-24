@@ -181,3 +181,24 @@ Pour une installation autorisée, générer 32 octets aléatoires et conserver l
 La fonction verrouille l’adhésion et la demande, compare les cinq données métier à celles analysées, puis ajoute une révision. Les données source sont comparées en mémoire SQL, seule la sortie J6 est conservée. Deux analyses acceptées produisent deux révisions. Le statut commercial reste géré séparément. La suppression autorisée de la demande supprime son historique par cascade. Tant que l’historique existe, la référence à l’auteur empêche sa suppression physique.
 
 Sous `/api/quote-requests/{id}/qualifications`, POST avec origine identique et corps vide enregistre une qualification. GET retourne les révisions décroissantes (25 par défaut, limite 100, curseur exclusif `before`). GET sur `/latest` retourne la dernière, ou 404. Une demande modifiée pendant le calcul renvoie 409 si ses champs analysés ont changé. Les trois rôles métier peuvent qualifier une demande de leur entreprise active. Le budget SQL égal à zéro étant ambigu, il est traité comme inconnu. Une nouvelle tentative de POST réussie crée volontairement une nouvelle révision.
+
+### J9 — Automatisation des relances
+
+L’équipe active configure les délais (heures normales et prioritaires), le maximum d’envois par demande et la taille d’un lot par `PUT /api/followup-automation/settings` (owner ou admin). Le corps JSON contient `delay_hours`, `urgent_hours`, `max_attempts` et `batch_size`. Un maximum de zéro suspend les préparations. Avant toute configuration ou préférence explicite, aucune relance ne devient prête.
+
+Les membres consultent `GET /api/quote-requests/{id}/followup-automation`. La réponse contient la décision courante et au plus 25 décisions historiques, de la plus récente à la plus ancienne. Pour la page suivante, passer le dernier identifiant historique dans `?before=`. Les événements sont enregistrés par POST à la même adresse avec un UUID stable `operation`, un `kind` et, si nécessaire, une `value`. Une réutilisation de l’UUID avec un contenu différent produit un conflit. Les cookies, l’origine et l’entreprise active sont contrôlés par les mêmes mécanismes que J8.
+
+| Événement | Effet |
+|---|---|
+| `contact` | Date du dernier contact mise à jour au moment de la saisie |
+| `delay` | Échéance repoussée au moins jusqu’à l’instant ISO fourni avec fuseau |
+| `interested`, `information`, `appointment`, `human` | Suivi humain jusqu’à reprise |
+| `pause`, `resume` | Suspension manuelle, reprise par owner ou admin |
+| `preference` | Canal déclaré pour ce prospect (email, sms ou phone), par owner ou admin |
+| `refused`, `opt_out` | Arrêt pour la demande refusée ou pour toutes les demandes du prospect opposé |
+
+Les statuts terminaux, une qualification nécessitant une revue et les rappels J8 manuels ouverts bloquent la préparation. Un changement de prospect suspend la demande pour revue. Une reprise ne lève ni une opposition ni un refus. Les délais partent du dernier contact connu ou, à défaut, de la création de la demande. Une erreur du worker conserve le SQLSTATE et une échéance de nouvelle tentative.
+
+**Exécution périodique.** L’ordonnanceur serveur peut lancer `psql -X -f supabase/scheduler/run-followups.sql` depuis le dossier saas, avec une connexion PostgreSQL opérateur configurée séparément. Chaque entreprise configurée reçoit une transaction et un lot borné. La migration n’active aucun ordonnanceur distant. La fréquence de déclenchement détermine le retard possible après échéance.
+
+**Contrat des futurs fournisseurs.** En contexte privé, `prepared_followups(tenant)` fournit la demande, le prospect, le canal et l’identifiant immuable de préparation à utiliser comme clé d’idempotence. Seul un accusé de livraison vérifié par une intégration de confiance pourra être enregistré par `confirm_followup_delivery`. Cette opération conserve le passage à l’état envoyé et calcule la prochaine décision dans la même transaction. Le futur transport devra revérifier la préparation et gérer les accusés tardifs ou incertains avant activation. J9 ne connecte aucun transport.
