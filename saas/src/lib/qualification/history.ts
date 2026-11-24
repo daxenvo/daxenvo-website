@@ -79,7 +79,9 @@ export async function qualifications(request: NextRequest, id: string, latest = 
         p_message: message, p_signature: createHmac("sha256", key).update(message).digest("hex"),
       }).single();
       if (saved.error?.code === "P0002") throw new ApiError(404, "NOT_FOUND");
-      if (saved.error?.code === "40001") throw new ApiError(409, "SOURCE_CHANGED");
+      if ((saved.error?.code === "PT409" && saved.error.message === "SOURCE_CHANGED") ||
+          (saved.error?.code === "40001" && saved.error.message === "Qualification source changed"))
+        throw new ApiError(409, "SOURCE_CHANGED");
       checkDatabase(saved.error, saved.status);
       if (!saved.data) throw new ApiError(503, "UNAVAILABLE");
       return json({data: saved.data}, 201);

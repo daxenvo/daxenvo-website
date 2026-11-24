@@ -100,3 +100,27 @@ for (const renewable of [false,true]) {
     } finally {await api.dispose();}
   });
 }
+
+test("Le POST traduit le conflit de source et distingue permission et sérialisation", async ({request}) => {
+  await login(request);
+  const id = await fixture(request);
+  const url = path(id);
+  const cookie = (await request.storageState()).cookies.find(c => c.name.endsWith("auth-token"))!;
+  const session = JSON.parse(Buffer.from(cookie.value.slice(7), "base64url").toString());
+  for (const [status, code, message, expectedStatus, error] of [
+    [409, "PT409", "SOURCE_CHANGED", 409, "SOURCE_CHANGED"],
+    [500, "40001", "Qualification source changed", 409, "SOURCE_CHANGED"],
+    [403, "42501", "insufficient privilege", 403, "FORBIDDEN"],
+    [500, "40001", "could not serialize access due to concurrent update", 503, "UNAVAILABLE"],
+  ] as const) {
+    const setup = await request.post("http://127.0.0.1:3129/rest/v1/test/next-qualification-error", {
+      headers: {authorization: "Bearer " + session.access_token},
+      data: {requestId: id, response: {status, body: {code, message, details: null, hint: null}}},
+    });
+    expect(setup.status()).toBe(200);
+    const response = await request.post(url, {headers});
+    expect(response.status()).toBe(expectedStatus);
+    expect(await response.json()).toEqual({error});
+  }
+  expect((await (await request.get(url)).json()).data).toEqual([]);
+});

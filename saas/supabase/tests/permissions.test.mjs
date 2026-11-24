@@ -37,6 +37,7 @@ before(async () => {
   // Hosted Supabase reserves GRANT on auth to its managed schema owner.
   await db.exec("revoke usage on schema auth from daxenvo_qualification_writer");
   await db.exec(await sqlFile("../migrations/003b_qualification_writer_identity.sql"));
+  await db.exec(await sqlFile("../migrations/003c_qualification_source_conflict.sql"));
   await db.exec(await sqlFile("./tenant-isolation.sql"));
   await db.query("insert into auth.users(id) values ($1), ($2), ($3)", [
     alice,
@@ -246,7 +247,7 @@ for (const [label, changes, code] of [
   ["secret incorrect",{writer:"00".repeat(32)},"42501"],
   ["signature altérée",{tamper:true},"42501"],
   ["autorisation expirée",{expires:1},"42501"],
-  ["source modifiée",{source:{}},"40001"],
+  ["source modifiée",{source:{}},"PT409"],
   ["entreprise incohérente",{company:a},"P0002"],
   ["provenance falsifiée",{result:{...ruleResult,analysePar:"ia"}},"23514"],
 ]) {
@@ -273,4 +274,15 @@ test("Le rôle de persistance utilise le JWT sans accès au schéma Auth géré"
   assert.equal(privileges.rows[0].usage, false);
   const {write} = await qualificationFixture();
   assert.equal((await write()).rows[0].created_by, alice);
+});
+
+test("Une modification après lecture refuse le résultat signé sans ajouter de révision", async () => {
+  const {row, write} = await qualificationFixture();
+  await write();
+  await db.query("update quote_requests set description = $1 where id = $2", ["Description modifiée",row.id]);
+  await db.exec("savepoint stale_write");
+  await assert.rejects(write(), {code: "PT409", message: "SOURCE_CHANGED"});
+  await db.exec("rollback to savepoint stale_write");
+  const history = await db.query("select revision from request_qualifications where request_id = $1", [row.id]);
+  assert.deepEqual(history.rows, [{revision: 1}]);
 });

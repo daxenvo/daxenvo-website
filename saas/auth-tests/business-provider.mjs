@@ -2,7 +2,13 @@
 import { createHash, createHmac, randomUUID } from "node:crypto";
 const tables = new Map([["prospects", new Map()], ["quote_requests", new Map()], ["followups", new Map()], ["appointments", new Map()], ["request_qualifications", new Map()]]);
 
+const nextQualificationError = new Map();
+
 export function businessReply(request, url, input, reply, actor) {
+  if (request.method === "POST" && url.pathname === "/rest/v1/test/next-qualification-error") {
+    nextQualificationError.set(input.requestId, input.response);
+    return reply(200, {});
+  }
   if (url.pathname === "/rest/v1/rpc/record_request_qualification") {
     const key = createHash("sha256").update(process.env.QUALIFICATION_WRITER_TOKEN).digest();
     if (createHmac("sha256", key).update(input.p_message).digest("hex") !== input.p_signature)
@@ -11,6 +17,11 @@ export function businessReply(request, url, input, reply, actor) {
     if (signer !== actor) return reply(403, {code: "42501"});
     const row = tables.get("quote_requests").get(p_request);
     if (!row || row.company_id !== p_company) return reply(404, {code: "P0002"});
+    const failure = nextQualificationError.get(p_request);
+    if (failure) {
+      nextQualificationError.delete(p_request);
+      return reply(failure.status, failure.body);
+    }
     const history = tables.get("request_qualifications");
     const revision = 1 + [...history.values()].filter(h => h.request_id === p_request).length;
     const saved = {id: randomUUID(), company_id: p_company, request_id: p_request,
