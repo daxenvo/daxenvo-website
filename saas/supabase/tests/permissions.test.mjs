@@ -524,12 +524,12 @@ async function bookingFixture() {
   await db.query("insert into daxenvo_private.booking_calendar(company_id,binding,writer_digest) values($1,$2,$3)",[a,binding,key]);
   async function command(command,fields={},user=bob,tenant=a,target=request.id) {
     await signIn(user);
-    const message=JSON.stringify({purpose:"booking.v1",binding,command,fields:command==="reserve"?{invitee_hash:"01".repeat(32),...fields}:fields,actor:user,company:tenant,request:target,expires:Math.floor(Date.now()/1000)+45});
+    const message=JSON.stringify({purpose:"booking.v1",nonce:randomUUID(),binding,command,fields:command==="reserve"?{invitee_hash:"01".repeat(32),...fields}:fields,actor:user,company:tenant,request:target,expires:Math.floor(Date.now()/1000)+45});
     const signature=createHmac("sha256",key).update(message).digest("hex");
     return (await db.query("select public.booking_command($1,$2) as result",[message,signature])).rows[0].result;
   }
   const slot={operation:randomUUID(),title:"Visite fictive",zone:"Europe/Paris",start:"2030-05-15T12:00:00Z",minutes:30};
-  return {command,slot,request};
+  return {command,slot,request,binding,key};
 }
 test("J10 — proposition, réservation unique, observation, déplacement et annulation",async()=>{
   const {command,slot,request}=await bookingFixture();
@@ -587,4 +587,35 @@ test("J10 — les confirmations RPC directes non signées sont refusées",async(
   await signIn(alice);
   const msg=JSON.stringify({company:a,actor:alice,command:"observe",purpose:"booking.v1"});
   await assert.rejects(db.query("select public.booking_command($1,$2)",[msg,"00".repeat(32)]),{code:"42501"});
+});
+
+test("J10 — propriétaires confinés et droits effectifs des déclencheurs",async()=>{
+  const {rows}=await db.query(`select proname,rolname,rolsuper,rolcanlogin,rolbypassrls,
+    has_function_privilege('authenticated',p.oid,'execute') as client,
+    has_table_privilege(rolname,'daxenvo_private.booking_calendar','select') as config
+    from pg_proc p join pg_roles r on r.oid=p.proowner
+    where pronamespace='daxenvo_private'::regnamespace and proname in
+    ('project_booking','booking_slot_guard','booking_source_guard','booking_followup_guard','booking_reevaluate')`);
+  assert.equal(rows.length,5);
+  for(const row of rows){
+    assert.equal(row.rolname,row.proname==='project_booking'?'daxenvo_booking_projection':
+      row.proname==='booking_source_guard'?'daxenvo_booking_source':row.proname==='booking_reevaluate'?'daxenvo_followup_api':'daxenvo_booking_guard');
+    assert.ok(!row.rolsuper && !row.rolcanlogin && !row.rolbypassrls && !row.client && !row.config);
+  }
+});
+test("J10 — signature consommée une seule fois et expiration",async()=>{
+  const {request,binding,key}=await bookingFixture();
+  await signIn(bob);
+  const signed=(offset)=>{
+    const message=JSON.stringify({actor:bob,company:a,request:request.id,binding,command:"list",
+      purpose:"booking.v1",fields:{},expires:Math.floor(Date.now()/1000)+offset});
+    return [message,createHmac("sha256",key).update(message).digest("hex")];
+  };
+  const call=(args)=>db.query("select public.booking_command($1,$2)",args);
+  const args=signed(45);
+  await call(args);
+  await db.exec("savepoint replay");
+  await assert.rejects(call(args),{code:"42501"});
+  await db.exec("rollback to replay");
+  await assert.rejects(call(signed(-10)),{code:"42501"});
 });

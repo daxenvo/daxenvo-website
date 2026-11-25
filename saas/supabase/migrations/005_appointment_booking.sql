@@ -6,7 +6,7 @@ create table daxenvo_private.booking_calendar (
   binding uuid not null unique, writer_digest bytea not null check(octet_length(writer_digest)=32),
   per_minute int not null default 20 check(per_minute between 1 and 120),
   daily_creates int not null default 5 check(daily_creates between 1 and 1000),
-  minute_start timestamptz, minute_used int not null default 0,
+  used_signatures jsonb not null default '{}', minute_start timestamptz, minute_used int not null default 0,
   day_start timestamptz, day_used int not null default 0, blocked_until timestamptz
 );
 create table daxenvo_private.bookings (
@@ -34,19 +34,56 @@ create policy booking_projection_insert on public.appointments as restrictive fo
 create policy booking_projection_update on public.appointments as restrictive for update to authenticated using(not provider_managed) with check(not provider_managed);
 create policy booking_projection_delete on public.appointments as restrictive for delete to authenticated using(not provider_managed);
 
-create function daxenvo_private.booking_followup_guard() returns trigger language plpgsql security definer set search_path='' as $$
+-- Trigger owners can access only the tenant of the firing row. Private roles are
+-- never granted to API roles. Restore the previous scope for nested triggers.
+create role daxenvo_booking_guard nologin noinherit nobypassrls;
+create role daxenvo_booking_source nologin noinherit nobypassrls;
+create role daxenvo_booking_projection nologin noinherit nobypassrls;
+grant daxenvo_booking_guard,daxenvo_booking_source,daxenvo_booking_projection,daxenvo_followup_api to current_user;
+grant usage on schema public,daxenvo_private to daxenvo_booking_guard,daxenvo_booking_source,daxenvo_booking_projection;
+grant select(company_id,request_id,state,starts_at,duration_minutes,rejected) on daxenvo_private.bookings to daxenvo_booking_guard;
+grant select(company_id,request_id,rejected,state),delete on daxenvo_private.bookings to daxenvo_booking_source;
+create policy booking_guard_read on daxenvo_private.bookings for select to daxenvo_booking_guard,daxenvo_booking_source
+  using(company_id=nullif(current_setting('daxenvo.booking_company',true),'')::uuid);
+create policy booking_guard_delete on daxenvo_private.bookings for delete to daxenvo_booking_source
+  using(company_id=nullif(current_setting('daxenvo.booking_company',true),'')::uuid and state='proposed');
+grant select(id,company_id,request_id,provider_managed,starts_at,duration_minutes),insert(id,company_id,request_id,title,starts_at,duration_minutes,provider_managed),
+  update(starts_at,duration_minutes),delete on public.appointments to daxenvo_booking_projection;
+create policy booking_projection on public.appointments to daxenvo_booking_projection
+  using(provider_managed and company_id=nullif(current_setting('daxenvo.booking_company',true),'')::uuid)
+  with check(provider_managed and company_id=nullif(current_setting('daxenvo.booking_company',true),'')::uuid);
+
+-- Run the existing invoker-only evaluator under its existing J9 privilege set.
+create function daxenvo_private.booking_reevaluate(tenant uuid,target uuid) returns void
+language plpgsql security definer set search_path='' set lock_timeout='3s' as $$
+declare previous text:=coalesce(current_setting('daxenvo.followup_company',true),'');
 begin
+  perform set_config('daxenvo.followup_company',tenant::text,true);
+  perform daxenvo_private.evaluate_followup(tenant,target);
+  perform set_config('daxenvo.followup_company',previous,true);
+end $$;
+grant create on schema daxenvo_private to daxenvo_followup_api;
+alter function daxenvo_private.booking_reevaluate(uuid,uuid) owner to daxenvo_followup_api;
+revoke create on schema daxenvo_private from daxenvo_followup_api;
+revoke all on function daxenvo_private.booking_reevaluate(uuid,uuid) from public,anon,authenticated,service_role;
+grant execute on function daxenvo_private.booking_reevaluate(uuid,uuid) to daxenvo_booking_projection;
+create function daxenvo_private.booking_followup_guard() returns trigger language plpgsql security definer set search_path='' set lock_timeout='3s' as $$
+declare previous text:=coalesce(current_setting('daxenvo.booking_company',true),'');
+begin
+  perform set_config('daxenvo.booking_company',new.company_id::text,true);
   if new.state in ('prepared','scheduled') and exists(select from daxenvo_private.bookings
     where company_id=new.company_id and request_id=new.request_id and state='confirmed') then
     new.state:='cancelled'; new.reason:='confirmed_appointment'; new.due_at:=null;
   end if;
-  return new;
+  perform set_config('daxenvo.booking_company',previous,true); return new;
 end $$;
 create trigger booking_followup_guard before update on daxenvo_private.followup_job
   for each row execute function daxenvo_private.booking_followup_guard();
 
-create function daxenvo_private.project_booking() returns trigger language plpgsql security definer set search_path='' as $$
+create function daxenvo_private.project_booking() returns trigger language plpgsql security definer set search_path='' set lock_timeout='3s' as $$
+declare previous text:=coalesce(current_setting('daxenvo.booking_company',true),'');
 begin
+  perform set_config('daxenvo.booking_company',new.company_id::text,true);
   if new.state='confirmed' then
     insert into public.appointments(id,company_id,request_id,title,starts_at,duration_minutes,provider_managed)
       values(new.id,new.company_id,new.request_id,new.title,new.starts_at,new.duration_minutes,true)
@@ -55,45 +92,57 @@ begin
     if not found then raise exception using errcode='PT409',message='APPOINTMENT_CONFLICT'; end if;
   elsif old.state='confirmed' then
     delete from public.appointments where id=new.id and company_id=new.company_id and provider_managed;
-  else return null;
+  else perform set_config('daxenvo.booking_company',previous,true); return null;
   end if;
-  perform daxenvo_private.evaluate_followup(new.company_id,new.request_id);
-  return null;
+  perform daxenvo_private.booking_reevaluate(new.company_id,new.request_id);
+  perform set_config('daxenvo.booking_company',previous,true); return null;
 end $$;
 create trigger project_booking after update of state,starts_at,duration_minutes on daxenvo_private.bookings
   for each row execute function daxenvo_private.project_booking();
 
 -- Preserve unresolved reservations if J8 callers try to delete or reassign their source.
-create function daxenvo_private.booking_source_guard() returns trigger language plpgsql security definer set search_path='' as $$
+create function daxenvo_private.booking_source_guard() returns trigger language plpgsql security definer set search_path='' set lock_timeout='3s' as $$
+declare previous text:=coalesce(current_setting('daxenvo.booking_company',true),'');
 begin
-  if tg_op='UPDATE' and old.prospect_id=new.prospect_id then return new; end if;
+  perform set_config('daxenvo.booking_company',old.company_id::text,true);
+  if tg_op='UPDATE' and old.prospect_id=new.prospect_id then perform set_config('daxenvo.booking_company',previous,true); return new; end if;
   perform pg_advisory_xact_lock(hashtextextended(old.company_id::text,9));
   if exists(select from daxenvo_private.bookings where company_id=old.company_id and request_id=old.id
     and not rejected and state in ('pending','confirmed','error')) then
     raise exception using errcode='23503', message='ACTIVE_BOOKING';
   end if;
-  if tg_op='DELETE' then return old; end if;
+  if tg_op='DELETE' then perform set_config('daxenvo.booking_company',previous,true); return old; end if;
   delete from daxenvo_private.bookings where company_id=old.company_id and request_id=old.id and state='proposed';
-  return new;
+  perform set_config('daxenvo.booking_company',previous,true); return new;
 end $$;
 create trigger booking_source_guard before delete or update of prospect_id on public.quote_requests
   for each row execute function daxenvo_private.booking_source_guard();
 
-create function daxenvo_private.booking_slot_guard() returns trigger language plpgsql security definer set search_path='' as $$
+create function daxenvo_private.booking_slot_guard() returns trigger language plpgsql security definer set search_path='' set lock_timeout='3s' as $$
+declare previous text:=coalesce(current_setting('daxenvo.booking_company',true),'');
 begin
-  if new.provider_managed then return new; end if;
+  perform set_config('daxenvo.booking_company',new.company_id::text,true);
+  if new.provider_managed then perform set_config('daxenvo.booking_company',previous,true); return new; end if;
   perform pg_advisory_xact_lock(hashtextextended(new.company_id::text,9));
   if exists(select from daxenvo_private.bookings b where b.company_id=new.company_id and not b.rejected and b.state in ('pending','confirmed','error')
     and b.starts_at < new.starts_at+make_interval(mins=>new.duration_minutes)
     and new.starts_at < b.starts_at+make_interval(mins=>b.duration_minutes)) then
     raise exception using errcode='23503',message='SLOT_UNAVAILABLE';
   end if;
-  return new;
+  perform set_config('daxenvo.booking_company',previous,true); return new;
 end $$;
 create trigger booking_slot_guard before insert or update of starts_at,duration_minutes on public.appointments
   for each row execute function daxenvo_private.booking_slot_guard();
 revoke all on function daxenvo_private.project_booking(),daxenvo_private.booking_followup_guard(),
   daxenvo_private.booking_slot_guard(),daxenvo_private.booking_source_guard() from public,anon,authenticated,service_role;
+
+grant create on schema daxenvo_private to daxenvo_booking_guard,daxenvo_booking_source,daxenvo_booking_projection;
+alter function daxenvo_private.booking_followup_guard() owner to daxenvo_booking_guard;
+alter function daxenvo_private.booking_source_guard() owner to daxenvo_booking_source;
+alter function daxenvo_private.booking_slot_guard() owner to daxenvo_booking_guard;
+alter function daxenvo_private.project_booking() owner to daxenvo_booking_projection;
+revoke create on schema daxenvo_private from daxenvo_booking_guard,daxenvo_booking_source,daxenvo_booking_projection;
+revoke daxenvo_booking_guard,daxenvo_booking_source,daxenvo_booking_projection,daxenvo_followup_api from current_user;
 
 -- Authenticate signed provider commands independently of the public Next.js handler.
 create role daxenvo_booking_api nologin noinherit nobypassrls;
@@ -115,7 +164,7 @@ create policy booking_config on daxenvo_private.booking_calendar to daxenvo_book
   using(company_id in (select company_id from public.company_memberships))
   with check(company_id in (select company_id from public.company_memberships));
 grant select,insert,update on daxenvo_private.bookings to daxenvo_booking_api;
-grant select,update(minute_start,minute_used,day_start,day_used,blocked_until) on daxenvo_private.booking_calendar to daxenvo_booking_api;
+grant select,update(used_signatures,minute_start,minute_used,day_start,day_used,blocked_until) on daxenvo_private.booking_calendar to daxenvo_booking_api;
 
 create function daxenvo_private.booking_command(message text,signature text) returns jsonb
 language plpgsql security definer set search_path='' set lock_timeout='3s' as $$
@@ -140,6 +189,13 @@ begin
      then raise insufficient_privilege; end if;
   if cmd in ('cancel','reschedule','recover') and membership='member' then raise insufficient_privilege; end if;
   perform pg_advisory_xact_lock(hashtextextended(tenant::text,9));
+  -- Consume once in the same transaction as the operation. Keep only live signatures.
+  update daxenvo_private.booking_calendar set used_signatures=
+    coalesce((select jsonb_object_agg(k,v) from jsonb_each(used_signatures) e(k,v)
+      where v::bigint>=extract(epoch from clock_timestamp())), '{}'::jsonb)
+    || jsonb_build_object(signature,(msg->>'expires')::bigint)
+    where company_id=tenant and not used_signatures ? signature and (msg->>'expires')::bigint>=extract(epoch from clock_timestamp());
+  if not found then raise insufficient_privilege; end if;
   if not exists(select from public.quote_requests where company_id=tenant and id=target) then
     raise exception using errcode='PT404',message='NOT_FOUND'; end if;
   if cmd not in ('read','observe','failure','cooldown') then

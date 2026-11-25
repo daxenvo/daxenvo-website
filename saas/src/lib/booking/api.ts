@@ -1,5 +1,5 @@
 import "server-only";
-import {createHash, createHmac} from "node:crypto";
+import {createHash, createHmac, randomUUID} from "node:crypto";
 import {NextRequest,NextResponse} from "next/server";
 import {z} from "zod";
 import {ApiError,businessAccess,businessError,checkDatabase,readBody} from "@/lib/business/api";
@@ -70,7 +70,7 @@ export async function bookingApi(request:NextRequest,requestId:string) {
     const writer=createHash("sha256").update(config.writer).digest();
     const emailHash=(email:string)=>createHmac("sha256",writer).update("invitee:"+email.trim().toLowerCase()).digest("hex");
     const command:Command=async(cmd,fields)=>{
-      const message=JSON.stringify({purpose:"booking.v1",actor:user.id,company:tenant,request:requestId,binding:config.eventType,
+      const message=JSON.stringify({purpose:"booking.v1",nonce:randomUUID(),actor:user.id,company:tenant,request:requestId,binding:config.eventType,
         command:cmd,fields,expires:Math.floor(Date.now()/1000)+45});
       const signature=createHmac("sha256",writer).update(message).digest("hex");
       const r=await client.rpc("booking_command",{message,signature});
