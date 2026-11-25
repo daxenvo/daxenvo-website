@@ -22,7 +22,10 @@ test("créneaux UTC et passage à l’heure d’été",async()=>{
 test("création corrélée puis confirmation par lecture Calendly",async()=>{
   const p=adapter((url,o)=>{
     if(url===type)return {resource:info};
-    if(url.endsWith("/invitees")) {const body=JSON.parse(String(o?.body));assert.equal(body.tracking.utm_content,"op");assert.equal(body.invitee.timezone,"Europe/Paris");}
+    if(url.endsWith("/invitees")) {const body=JSON.parse(String(o?.body));assert.deepEqual(body,{
+      event_type:type,start_time:start,invitee:{name:"Fixture",email:"fixture@example.invalid",timezone:"Europe/Paris"},
+      location:{kind:"google_conference"},tracking:{utm_content:"op",utm_source:null,utm_campaign:null,utm_medium:null,utm_term:null,salesforce_uuid:null},
+    });}
     return {resource:url===meeting?appointment:guest};
   });
   assert.equal(await p.reserve("op",{start,minutes:30},{name:"Fixture",email:"fixture@example.invalid",zone:"Europe/Paris"}),ref);
@@ -45,4 +48,45 @@ test("réconciliation après réponse perdue sans rejouer la création",async()=
   const p=adapter((url,opts)=>{assert.equal(opts?.method,"GET");return {collection:url.includes("/invitees?")?[guest]:[appointment]}});
   assert.equal(await p.discover("op",start),ref);
   assert.equal(await p.discover("other",start),null);
+});
+
+test("refus de création : opération, statut amont et champs techniques filtrés",async t=>{
+  const log=t.mock.method(console,"warn",()=>{});
+  const payload={title:"Invalid Argument",message:"Specified location kind is not configured for this event type.",
+    code:"sensitive-token",details:[{parameter:"location.kind",code:"invalid",message:guest.email},
+      {parameter:guest.email,code:"private-password"}],email:guest.email};
+  const p=adapter(url=>url===type?{resource:info}:Response.json(payload,{status:400}));
+  await assert.rejects(p.reserve("op",{start,minutes:30},{name:"Private Name",email:guest.email,zone:"UTC"}),
+    {message:"CALENDAR_REJECTED",status:503,rejected:true});
+  assert.deepEqual(JSON.parse(JSON.stringify(log.mock.calls[0].arguments)),["calendly.failure",{
+    operation:"create_invitee",httpStatus:400,title:"Invalid Argument",reason:"location_not_configured",
+    details:[{code:"invalid",parameter:"location.kind"}],
+  }]);
+});
+
+test("échec incertain : une seule création et aucun contenu brut dans le diagnostic",async t=>{
+  const log=t.mock.method(console,"warn",()=>{});
+  for(const response of [new Response("private-password",{status:502}),
+    new Response("x".repeat(9000),{status:503}),new Response("private data",{status:201})]){
+    let posts=0;
+    const p=adapter(url=>{
+      if(url===type)return {resource:info};
+      posts++;
+      return response;
+    });
+    await assert.rejects(p.reserve("op",{start,minutes:30},{name:"Fixture",email:guest.email,zone:"UTC"}),{rejected:false});
+    assert.equal(posts,1);
+    assert.deepEqual(log.mock.calls.at(-1)?.arguments,["calendly.failure",{
+      operation:"create_invitee",httpStatus:response.status,...(response.ok?{reason:"invalid_json"}:{}),
+    }]);
+  }
+});
+
+test("un refus avant la création identifie la lecture du type Calendly",async t=>{
+  const log=t.mock.method(console,"warn",()=>{});
+  const p=adapter(()=>Response.json({title:"Insufficient scope",code:"insufficient_scope"},{status:403}));
+  await assert.rejects(p.reserve("op",{start,minutes:30},{name:"Fixture",email:guest.email,zone:"UTC"}),{status:503});
+  assert.deepEqual(JSON.parse(JSON.stringify(log.mock.calls[0].arguments)),["calendly.failure",{
+    operation:"get_event_type",httpStatus:403,title:"Insufficient scope",code:"insufficient_scope",details:[],
+  }]);
 });
