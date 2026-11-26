@@ -510,9 +510,12 @@ test("J9 — contexte RLS restauré après RPC, répétition, déclencheur et re
   await assertRestored();
 });
 test("J9 — aucun paramètre personnalisé dans la définition des fonctions privilégiées",async()=>{
-  const {rows}=await db.query(`select proconfig from pg_proc
+  const {rows}=await db.query(`select proname,proconfig from pg_proc
     where proowner='daxenvo_followup_api'::regrole and prosecdef`);
-  assert.equal(rows.length,5);
+  assert.deepEqual(rows.map(r=>r.proname).sort(), [
+    "booking_reevaluate","configure_followup_automation","followup_automation_event",
+    "followup_automation_status","followup_source_changed","manual_followup_changed",
+  ]);
   for (const {proconfig} of rows) {
     assert.ok(proconfig.includes("lock_timeout=3s"));
     assert.ok(proconfig.every(setting=>!setting.startsWith("daxenvo.")));
@@ -657,4 +660,49 @@ test("J11 — absence de secrets, de privilèges d’écriture et d’accès ano
     has_table_privilege('authenticated','daxenvo_private.bookings','select') as direct,
     has_function_privilege('anon','public.client_dashboard(uuid,text,text,text,text,uuid)','execute') as anonymous`);
   assert.deepEqual(r,{secret:false,writer:false,direct:false,anonymous:false});
+});
+
+test("J11 — historique exact des transitions, sans doublon ni insertion client",async()=>{
+  await signIn(alice);
+  await db.query("update public.quote_requests set status='gagnee' where company_id=$1",[a]);
+  await db.query("update public.quote_requests set status='gagnee' where company_id=$1",[a]);
+  const changes=(await dashboard(a,"activite")).filter(e=>e.kind==="statut");
+  assert.equal(changes.length,1);
+  assert.equal(changes[0].detail,"nouvelle>gagnee");
+  assert.equal((await dashboard(a,"synthese")).won,1);
+  assert.equal((await dashboard(b,"activite")).filter(e=>e.kind==="statut").length,0);
+  await assert.rejects(db.exec("insert into daxenvo_private.request_status_history default values"),{code:"42501"});
+});
+
+test("J11 — priorité et attention basées sur la dernière révision uniquement",async()=>{
+  const {write}=await qualificationFixture();
+  await write({result:{...ruleResult,priorite:"elevee"}});
+  await write({result:{...ruleResult,priorite:"elevee"}});
+  assert.equal((await dashboard(b,"synthese")).priority,1);
+  assert.equal((await dashboard(b,"demandes","","attention")).length,1);
+  await write({result:{...ruleResult,priorite:"faible",requiresHumanReview:false}});
+  assert.equal((await dashboard(b,"synthese")).priority,0);
+  assert.equal((await dashboard(b,"demandes","","attention")).length,0);
+});
+test("J11 — réservation confirmée comptée une fois et distincte du rendez-vous manuel",async()=>{
+  const {command,slot}=await bookingFixture();
+  const {booking}=await command("propose",slot);
+  assert.equal((await dashboard(a,"synthese")).confirmed,0);
+  const claim=await command("reserve",{id:booking.id});
+  assert.equal((await dashboard(a,"synthese")).confirmed,0);
+  await command("observe",{id:booking.id,revision:claim.booking.revision,status:"confirmed",reference:"provider/ui",
+    start:slot.start,minutes:30,updated:"2029-01-01T00:00:00Z"});
+  assert.equal((await dashboard(a,"synthese")).confirmed,1);
+  assert.deepEqual((await dashboard(a,"rendez-vous")).map(r=>r.state).sort(),["confirmed","manual"]);
+});
+test("J11 — décisions J9 visibles, opposition et distinction préparation/envoi",async()=>{
+  const {event}=await automationFixture();
+  assert.equal((await dashboard(a,"synthese")).scheduled,1);
+  await event("human");
+  assert.equal((await dashboard(a,"synthese")).attention,1);
+  assert.equal((await dashboard(a,"relances","","attention"))[0].reason,"human");
+  await event("opt_out");
+  assert.equal((await dashboard(a,"synthese")).scheduled,0);
+  assert.equal((await dashboard(a,"relances","","cancelled"))[0].reason,"opt_out");
+  assert.ok((await dashboard(a,"activite")).some(e=>e.kind==="evenement"&&e.detail==="opt_out"));
 });
