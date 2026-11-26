@@ -244,6 +244,7 @@ export function Action({
         data.operation = last.current.id;
       }
       const result = await api(path, method, empty ? undefined : data);
+      last.current = { input: "", id: "" };
       onResult?.(result);
       if (createdIn && result?.data?.id) {
         location.assign(workspaceUrl(createdIn, { id: result.data.id }));
@@ -260,7 +261,7 @@ export function Action({
     }
   }
   return (
-    <form onSubmit={submit} className="client-form">
+    <form method="post" onSubmit={submit} className="client-form">
       <fieldset disabled={state.busy}>
         {children}
         <button className="btn secondary" type="submit">

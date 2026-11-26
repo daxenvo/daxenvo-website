@@ -102,7 +102,17 @@ function Activity({ data }: { data: z.infer<typeof activitySchema> }) {
         <a
           className="client-row"
           key={e.kind + e.key}
-          href={workspaceUrl("demandes", { id: e.request_id, onglet: ({ qualification:"qualification",relance:"relances",evenement:"relances","rendez-vous":"reservation" } as Record<string,string>)[e.kind] })}
+          href={workspaceUrl("demandes", {
+            id: e.request_id,
+            onglet: (
+              {
+                qualification: "qualification",
+                relance: "relances",
+                evenement: "relances",
+                "rendez-vous": "reservation",
+              } as Record<string, string>
+            )[e.kind],
+          })}
         >
           <span>
             <strong>{e.title}</strong>

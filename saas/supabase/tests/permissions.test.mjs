@@ -706,3 +706,13 @@ test("J11 — décisions J9 visibles, opposition et distinction préparation/env
   assert.equal((await dashboard(a,"relances","","cancelled"))[0].reason,"opt_out");
   assert.ok((await dashboard(a,"activite")).some(e=>e.kind==="evenement"&&e.detail==="opt_out"));
 });
+
+test("J11 — entreprise sans dossier, compteurs nuls et listes vides",async()=>{
+  const tenant=randomUUID();
+  await db.query("insert into public.companies(id,name) values($1,'Entreprise vide')",[tenant]);
+  await db.query("insert into public.company_memberships values($1,$2,'member')",[tenant,alice]);
+  await signIn(alice);
+  assert.ok(Object.values(await dashboard(tenant,"synthese")).every(n=>n===0));
+  for(const panel of ["demandes","prospects","relances","rendez-vous","activite"])
+    assert.deepEqual(await dashboard(tenant,panel),[]);
+});

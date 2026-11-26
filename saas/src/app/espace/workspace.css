@@ -168,3 +168,13 @@
     gap: 16px;
   }
 }
+
+.client-shell .skip-link:not(:focus) {
+  clip-path: inset(50%);
+}
+
+@media (min-width: 1050px) {
+  .client-content .stats-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}

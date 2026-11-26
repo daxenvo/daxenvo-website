@@ -17,6 +17,9 @@ export function businessReply(request, url, input, reply, actor) {
       open:requests.filter(r=>["nouvelle","a_qualifier"].includes(r.status)).length, priority:0,
       scheduled:0, attention:0, confirmed:0, won:requests.filter(r=>r.status==="gagnee").length, lost:requests.filter(r=>r.status==="perdue").length,
     });
+    if (input.panel === "activite") return reply(200,requests.map(r=>({
+      request_id:r.id, stamp:r.created_at, kind:"demande", key:r.id, title:r.title, detail:"",
+    })).sort((a,b)=>b.stamp.localeCompare(a.stamp)).slice(0,20));
     if (input.panel === "parametres") return reply(200,{calendar:false,policy:null});
     const rows=input.panel==="prospects"?prospects.map(p=>({key:p.id,id:p.id,request_id:null,title:p.name,detail:p.city,state:p.sector,
       stamp:null,priority:null,reason:null})):input.panel==="demandes"?requests.filter(r=>!input.related||r.prospect_id===input.related).map(r=>({

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { priorityLabels, statusLabels } from "@/lib/domain/models";
+import { priorityLabels, statuses, statusLabels } from "@/lib/domain/models";
 
 export const sections = {
   synthese: "Tableau de bord",
@@ -59,7 +59,8 @@ export const labels: Record<string, string> = {
   relance: "Suivi commercial",
   "rendez-vous": "Rendez-vous",
 };
-export const label = (value: string) => Object.hasOwn(labels,value) ? labels[value] : value;
+export const label = (value: string) =>
+  Object.hasOwn(labels, value) ? labels[value] : value;
 export function workspaceUrl(
   view: Section,
   params: Record<string, string | undefined> = {},
@@ -143,12 +144,7 @@ export const requestSchema = z.object({
   city: z.string().default(""),
   requested_timeline: z.string().default(""),
   budget: z.number().default(0),
-  status: z.enum(
-    Object.keys(statusLabels) as [
-      keyof typeof statusLabels,
-      ...(keyof typeof statusLabels)[],
-    ],
-  ),
+  status: z.enum(statuses),
 });
 export type ClientProspect = z.infer<typeof prospectSchema>;
 export type ClientRequest = z.infer<typeof requestSchema>;

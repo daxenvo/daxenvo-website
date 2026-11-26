@@ -398,7 +398,11 @@ export function Bookings({ id, role }: { id: string; role: Role }) {
                   title="Demander la réservation"
                   fixed={{ action: "reserve", id: b.id }}
                   confirm="Réserver ce créneau et autoriser l’invitation du destinataire indiqué ?"
-                  onResult={page.refresh}
+                  onResult={() => {
+                    setSlots(undefined);
+                    setLink("");
+                    page.refresh();
+                  }}
                 >
                   <Field name="name" label="Nom de l’invité" max={120} />
                   <Field
@@ -442,6 +446,7 @@ export function Bookings({ id, role }: { id: string; role: Role }) {
                           : undefined
                       }
                       onResult={(v) => {
+                        setSlots(undefined);
                         const url = v?.reschedule_url;
                         setLink(
                           url &&

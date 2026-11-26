@@ -196,6 +196,7 @@ test("J11 — mobile, chargement, opposition, rôles et états du calendrier sim
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
+  await page.evaluate(() => window.scrollTo(0, 0));
   await page.screenshot({
     path: info.outputPath("reservations-mobile.png"),
     fullPage: true,
@@ -207,4 +208,30 @@ test("J11 — mobile, chargement, opposition, rôles et états du calendrier sim
   await expect(page.getByRole("main").getByRole("alert")).toContainText(
     "configuré par un opérateur",
   );
+});
+
+test("J11 — changement de contexte et déconnexion propagés au second onglet", async ({
+  page,
+  context,
+}) => {
+  await login(page);
+  const other = await context.newPage();
+  await other.goto("/espace?vue=parametres");
+  await expect(
+    other.getByRole("heading", { name: "Entreprise Alpha" }),
+  ).toBeVisible();
+  await page.getByLabel("Entreprise active").selectOption(beta);
+  await page.getByRole("button", { name: "Ouvrir l’entreprise" }).click();
+  for (const tab of [page, other]) {
+    await expect(
+      tab.getByRole("heading", { name: "Entreprise Beta" }),
+    ).toBeVisible();
+    await expect(tab.getByText("Votre rôle · Propriétaire")).toBeVisible();
+  }
+  await page.getByRole("button", { name: "Se déconnecter" }).click();
+  await expect(page).toHaveURL(/\/connexion$/);
+  await expect(other).toHaveURL(/\/connexion/);
+  await expect(
+    other.getByRole("heading", { name: "Entreprise Beta" }),
+  ).toHaveCount(0);
 });
