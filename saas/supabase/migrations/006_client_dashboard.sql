@@ -158,4 +158,5 @@ revoke all on function public.client_dashboard(uuid,text,text,text,text,uuid),
   daxenvo_private.client_dashboard(uuid,text,text,text,text,uuid) from public,anon,service_role,authenticated;
 grant execute on function public.client_dashboard(uuid,text,text,text,text,uuid),
   daxenvo_private.client_dashboard(uuid,text,text,text,text,uuid) to authenticated;
+revoke daxenvo_dashboard_reader,daxenvo_status_recorder from current_user;
 commit;

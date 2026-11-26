@@ -716,3 +716,20 @@ test("J11 — entreprise sans dossier, compteurs nuls et listes vides",async()=>
   for(const panel of ["demandes","prospects","relances","rendez-vous","activite"])
     assert.deepEqual(await dashboard(tenant,panel),[]);
 });
+
+test("J11 — les appartenances de transfert ne permettent plus de prendre les rôles privés",async()=>{
+  const {rows}=await db.query(`select r.rolname, r.rolbypassrls,
+    exists(select from pg_auth_members m where m.roleid=r.oid
+      and m.member=current_user::regrole and (m.set_option or m.inherit_option)) as retained
+    from pg_roles r where r.rolname in ('daxenvo_dashboard_reader','daxenvo_status_recorder')
+    order by r.rolname`);
+  assert.equal(rows.length,2);
+  for(const role of rows) {
+    assert.equal(role.rolbypassrls,false,role.rolname);
+    assert.equal(role.retained,false,role.rolname);
+  }
+  await signIn(alice);
+  assert.equal((await dashboard(a,"synthese")).prospects,1);
+  await db.query("update public.quote_requests set status='en_cours' where company_id=$1",[a]);
+  assert.ok((await dashboard(a,"activite")).some(e=>e.kind==="statut"));
+});
