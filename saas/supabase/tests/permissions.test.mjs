@@ -42,6 +42,7 @@ before(async () => {
   await db.exec(await sqlFile("../migrations/003c_qualification_source_conflict.sql"));
   await db.exec(await sqlFile("../migrations/004_followup_automation.sql"));
   await db.exec(await sqlFile("../migrations/005_appointment_booking.sql"));
+  await db.exec(await sqlFile("../migrations/006_client_dashboard.sql"));
   await db.exec(await sqlFile("./tenant-isolation.sql"));
   await db.query("insert into auth.users(id) values ($1), ($2), ($3)", [
     alice,
@@ -618,4 +619,42 @@ test("J10 — signature consommée une seule fois et expiration",async()=>{
   await assert.rejects(call(args),{code:"42501"});
   await db.exec("rollback to replay");
   await assert.rejects(call(signed(-10)),{code:"42501"});
+});
+
+const dashboard = async (tenant, panel, term = "", facet = "", cursor = "", related = null) =>
+  (await db.query("select public.client_dashboard($1,$2,$3,$4,$5,$6) as result",
+    [tenant,panel,term,facet,cursor,related])).rows[0].result;
+
+test("J11 — indicateurs exacts, projection des listes et périmètre du rôle lecteur", async () => {
+  await signIn(bob);
+  assert.deepEqual(await dashboard(a,"synthese"), {
+    prospects:1,new:1,open:1,priority:0,won:0,lost:0,attention:0,scheduled:0,confirmed:0,
+  });
+  for (const panel of ["prospects","demandes","relances","rendez-vous","activite"]) {
+    assert.ok((await dashboard(a,panel)).length>0,panel);
+  }
+  assert.deepEqual(await dashboard(a,"parametres"),{policy:null,calendar:false});
+  await assert.rejects(dashboard(b,"synthese"),{code:"42501"});
+});
+
+test("J11 — pagination, recherche littérale et choix explicite du tenant multi-membre",async () => {
+  await signIn(alice);
+  const before = await dashboard(a,"prospects");
+  await db.query("insert into public.prospects(company_id,name,city,sector) select $1,'Prospect '||i,'Paris','Test' from generate_series(1,28) i",[a]);
+  const first = await dashboard(a,"prospects","Prospect","Test");
+  assert.equal(first.length,26);
+  const second = await dashboard(a,"prospects","Prospect","Test",first[24].key);
+  assert.equal(second.length,3);
+  assert.equal(new Set([...first.slice(0,25),...second].map(p=>p.id)).size,28);
+  assert.deepEqual(await dashboard(a,"prospects","%"),[]);
+  assert.equal((await dashboard(b,"synthese")).prospects,1);
+  assert.equal((await dashboard(b,"demandes","","","",before[0].id)).length,0);
+});
+
+test("J11 — absence de secrets, de privilèges d’écriture et d’accès anonyme",async () => {
+  const {rows:[r]}=await db.query(`select has_column_privilege('daxenvo_dashboard_reader','daxenvo_private.booking_calendar','writer_digest','select') as secret,
+    has_table_privilege('daxenvo_dashboard_reader','public.prospects','insert') as writer,
+    has_table_privilege('authenticated','daxenvo_private.bookings','select') as direct,
+    has_function_privilege('anon','public.client_dashboard(uuid,text,text,text,text,uuid)','execute') as anonymous`);
+  assert.deepEqual(r,{secret:false,writer:false,direct:false,anonymous:false});
 });

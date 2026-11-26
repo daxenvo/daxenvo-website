@@ -62,6 +62,9 @@ export async function businessAccess(request: NextRequest, session: ReturnType<t
   const client = session.client();
   const user = await verifiedUser(client);
   const active = selectCompany(await memberships(client, user.id), request.cookies.get(activeCompanyCookie)?.value);
+  const expectedCompany = request.headers.get("x-daxenvo-company");
+  if (expectedCompany !== null && expectedCompany !== active.company_id)
+    throw new ApiError(409, "COMPANY_CHANGED");
   return {client, active, user};
 }
 
