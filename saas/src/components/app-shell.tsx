@@ -67,11 +67,11 @@ function Navigation({ onNavigate }: { onNavigate?: () => void }) {
     </nav>
   );
 }
-function Brand() {
+export function Brand({href = "/fr/tableau-de-bord"}:{href?:string}) {
   return (
     <Link
       className="brand"
-      href="/fr/tableau-de-bord"
+      href={href}
     >
       <span className="brand-symbol" aria-hidden="true">
         <svg width="19" height="24" viewBox="0 0 19 24" fill="none" aria-hidden="true">

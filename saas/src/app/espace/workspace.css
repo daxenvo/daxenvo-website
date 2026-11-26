@@ -1,0 +1,170 @@
+.client-shell {
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  min-height: 100vh;
+}
+.client-sidebar {
+  position: sticky;
+  top: 0;
+  align-self: start;
+  height: 100dvh;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  background: var(--sidebar);
+  border-right: 1px solid var(--border);
+  padding: 28px 16px;
+}
+.client-account {
+  margin-top: auto;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  display: grid;
+  gap: 12px;
+}
+.client-account fieldset {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+.client-main,
+.client-content,
+.client-panel,
+.client-row > span {
+  min-width: 0;
+}
+.client-content {
+  display: grid;
+  gap: 20px;
+  max-width: 1440px;
+  margin: auto;
+  padding: 28px clamp(16px, 3vw, 48px) 56px;
+}
+.client-title {
+  font-size: 24px;
+}
+.client-panel {
+  padding: clamp(16px, 2vw, 26px);
+  display: grid;
+  align-content: start;
+  gap: 14px;
+}
+.client-panel h2 {
+  font-size: 18px;
+}
+.client-entry {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 6px;
+  padding: 12px 0;
+  overflow-wrap: anywhere;
+}
+.client-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 4px;
+  border-top: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.client-row:hover {
+  background: var(--hover);
+}
+.client-row small {
+  display: block;
+  color: var(--muted);
+}
+.client-meta {
+  text-align: right;
+}
+.client-row time {
+  color: var(--muted);
+  font-size: 12px;
+}
+.client-panel summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: 6px 0;
+}
+.client-form,
+.client-form fieldset {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.client-form {
+  margin: 8px 0;
+}
+.client-form .btn {
+  justify-self: start;
+}
+.client-links,
+.client-tabs,
+.client-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.client-filters {
+  align-items: end;
+}
+.client-tabs a,
+.client-link,
+.client-links > a:not(.btn),
+.client-panel p > a:not(.btn) {
+  color: var(--accent-text);
+  text-decoration: underline;
+}
+.client-tabs a {
+  padding: 8px 12px;
+}
+.client-tabs [aria-current] {
+  background: var(--accent-soft);
+  border-radius: var(--radius-control);
+  font-weight: 600;
+}
+.client-content .stats-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(195px, 100%), 1fr));
+}
+.client-content .stat-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+@media (max-width: 800px) {
+  .client-shell {
+    display: block;
+  }
+  .client-sidebar {
+    position: static;
+    height: auto;
+    padding: 16px;
+    gap: 14px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .client-sidebar nav {
+    display: flex;
+    overflow: auto;
+  }
+  .client-sidebar .nav-item {
+    flex: none;
+  }
+  .client-account {
+    display: flex;
+    align-items: end;
+    flex-wrap: wrap;
+    padding-top: 10px;
+  }
+  .client-account fieldset {
+    display: flex;
+    align-items: end;
+    flex-wrap: wrap;
+  }
+  .client-content {
+    gap: 16px;
+  }
+}

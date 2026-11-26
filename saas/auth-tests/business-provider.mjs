@@ -9,6 +9,22 @@ export function businessReply(request, url, input, reply, actor) {
     nextQualificationError.set(input.requestId, input.response);
     return reply(200, {});
   }
+  if (url.pathname === "/rest/v1/rpc/client_dashboard") {
+    const scoped = name => [...tables.get(name).values()].filter(r => r.company_id === input.tenant);
+    const prospects = scoped("prospects"), requests = scoped("quote_requests");
+    if (input.panel === "synthese") return reply(200, {
+      prospects:prospects.length, new:requests.filter(r=>r.status==="nouvelle").length,
+      open:requests.filter(r=>["nouvelle","a_qualifier"].includes(r.status)).length, priority:0,
+      scheduled:0, attention:0, confirmed:0, won:requests.filter(r=>r.status==="gagnee").length, lost:requests.filter(r=>r.status==="perdue").length,
+    });
+    if (input.panel === "parametres") return reply(200,{calendar:false,policy:null});
+    const rows=input.panel==="prospects"?prospects.map(p=>({key:p.id,id:p.id,request_id:null,title:p.name,detail:p.city,state:p.sector,
+      stamp:null,priority:null,reason:null})):input.panel==="demandes"?requests.filter(r=>!input.related||r.prospect_id===input.related).map(r=>({
+      key:r.id,id:r.id,request_id:r.id,title:r.title,detail:"",state:r.status,stamp:r.created_at,priority:null,reason:null,
+    })):[];
+    return reply(200,rows.filter(r=>r.key>input.cursor_key && (!input.facet||r.state===input.facet) &&
+      (r.title+" "+r.detail).toLowerCase().includes(input.term.toLowerCase())).sort((a,b)=>a.key.localeCompare(b.key)).slice(0,26));
+  }
   if (url.pathname === "/rest/v1/rpc/record_request_qualification") {
     const key = createHash("sha256").update(process.env.QUALIFICATION_WRITER_TOKEN).digest();
     if (createHmac("sha256", key).update(input.p_message).digest("hex") !== input.p_signature)
