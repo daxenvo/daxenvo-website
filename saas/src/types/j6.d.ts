@@ -13,6 +13,7 @@ declare module "*service.server.mjs" {
     motif: string;
     actionRecommandee: string;
     informationsManquantes: string[];
+    signaux: string[];
     analysePar: "regles";
     requiresHumanReview: boolean;
   }>;

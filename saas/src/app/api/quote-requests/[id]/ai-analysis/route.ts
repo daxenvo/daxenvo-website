@@ -31,3 +31,30 @@ export async function POST(request:NextRequest, context:{params:Promise<{id:stri
     return json(result);
   } catch(error) { return businessError(error,json); }
 }
+
+export async function GET(request: NextRequest, context: { params: Promise<{ id: string }> }) {
+  const session = responseSession(request);
+  const json = (body: unknown, status = 200) => session.finish(NextResponse.json(body, {status}));
+  try {
+    const {client, active} = await businessAccess(request, session);
+    const id = z.uuid().parse((await context.params).id);
+    const params = request.nextUrl.searchParams;
+    if (params.size !== new Set(params.keys()).size) throw new ApiError(400, "INVALID_QUERY");
+    const {before} = z.strictObject({
+      before: z.string().regex(/^[1-9]\d{0,9}$/).transform(Number).pipe(z.number().max(2147483647)).optional(),
+    }).parse(Object.fromEntries(params));
+    const requestRow = await client.from("quote_requests").select("id")
+      .eq("company_id", active.company_id).eq("id", id).maybeSingle();
+    checkDatabase(requestRow.error, requestRow.status);
+    if (!requestRow.data) throw new ApiError(404, "NOT_FOUND");
+    const limit = 10;
+    let query = client.from("request_ai_qualifications")
+      .select("operation,revision,created_at,created_by,model,prompt_version,outcome,result")
+      .eq("company_id", active.company_id).eq("request_id", id).order("revision", {ascending:false}).limit(limit+1);
+    if (before) query = query.lt("revision", before);
+    const history = await query;
+    checkDatabase(history.error, history.status);
+    if (!Array.isArray(history.data)) throw new ApiError(503, "UNAVAILABLE");
+    return json({data:history.data.slice(0,limit), nextCursor:history.data.length>limit ? history.data[limit-1].revision : null});
+  } catch (error) { return businessError(error, json); }
+}
