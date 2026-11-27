@@ -212,3 +212,43 @@ Calendly fait autorité pour la confirmation, les changements et l’annulation.
 Provisionnement opérateur après installation autorisée de 005 : une entrée par entreprise dans la variable serveur BOOKING_CALENDARS_JSON, indexée par UUID d’entreprise, avec host (UUID utilisateur Calendly), eventType (UUID de type individuel), token (jeton du fournisseur propre à cette entreprise) et writer (32 octets aléatoires encodés en 64 caractères hexadécimaux minuscules). Insérer par paramètres liés company_id, binding (eventType) et writer_digest dans daxenvo_private.booking_calendar. Le condensat est SHA-256 des octets UTF-8 de la chaîne hexadécimale. Protéger également ce condensat qui sert de clé HMAC. Configurer per_minute et daily_creates selon le forfait. Rotation coordonnée côté serveur et base. Utiliser un gestionnaire de secrets. L’intégration initiale nécessite un provisionnement manuel. Le parcours OAuth autonome et le renouvellement automatique des jetons restent à développer.
 
 Le premier adaptateur prend en charge les types individuels gratuits de 15 à 240 minutes, sans question obligatoire supplémentaire, avec Google Meet ou sans lieu. Les actions utilisent le JWT Supabase de l’utilisateur et une signature serveur par entreprise. Les rôles sont vérifiés en base. Les réservations confirmées suspendent les relances automatiques de la demande. Une annulation réévalue le suivi J9 sous ses règles existantes.
+
+### J12-1 — Qualification simulée et contrôle des dépenses
+
+`POST /api/quote-requests/{id}/ai-analysis` accepte uniquement un objet JSON contenant
+`operation` (UUID stable pour la même tentative). Les contrôles de session, d’origine,
+d’entreprise active et d’objet sont ceux des routes métier. La qualification historique J8
+par règles reste disponible indépendamment de cette route.
+
+Le mode serveur `DAXENVO_AI_MODE=simulation` utilise exclusivement le simulateur local.
+Le modèle logique et les limites proviennent de la politique privée de l’entreprise.
+Le simulateur reçoit la priorité déterministe et les noms des champs manquants.
+Aucun texte libre, identifiant ou secret ne figure dans son message. Le schéma J6 valide
+la réponse avant restitution. Aucun outil commercial n’est accessible.
+
+La migration additive 007 démarre sans politiques de consommation. Après autorisation
+d’installation, l’opérateur devra provisionner un login dédié `daxenvo_ai_runtime`
+NOINHERIT NOBYPASSRLS, sans privilège administratif, membre uniquement de
+`daxenvo_ai_gateway`, puis configurer son URL TLS vérifiée dans
+`DAXENVO_AI_DATABASE_URL` côté serveur. Le rôle de connexion ne doit avoir aucun droit
+métier propre. Chaque transaction sélectionne le rôle privé et fixe l’acteur et
+l’entreprise issus de la session vérifiée. Aucune RPC publique n’est ajoutée.
+L’opérateur configure une ligne ai_project et une ai_policy par entreprise autorisée.
+
+Une réservation sérialise le contrôle du plafond global, des limites journalières
+par acteur et entreprise, des jetons et dépenses journaliers et mensuels UTC,
+et des appels en cours. Les tarifs de simulation sont des micro-USD entiers par
+jeton. La charge réservée couvre toute l’entrée bornée et la sortie maximale.
+Les tentatives restent comptabilisées après suppression de la demande. Une mesure
+fiable remplace la réservation par la consommation mesurée. Une réponse invalide
+mesurée autorise une nouvelle opération dans la limite configurée. Aucun nouvel
+essai automatique. Un délai dépassé, une panne ambiguë ou une interruption après
+réservation conserve la charge maximale et la place de concurrence, même au
+changement de période. Une future procédure opérateur devra résoudre ces cas
+avec preuve de consommation. Le rejeu renvoie l’état de l’opération sans rappeler
+le fournisseur. Aucun résultat simulé n’est inséré dans l’historique J8.
+
+Avant tout fournisseur réel, il faudra qualifier le modèle, ses limites, le tarif,
+la majoration prudente et le comptage de l’intégralité de l’enveloppe et de la sortie
+facturable, puis vérifier la réconciliation contre son décompte effectif.
+Le compteur en octets du simulateur sert uniquement au test local.

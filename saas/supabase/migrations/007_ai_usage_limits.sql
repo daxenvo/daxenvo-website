@@ -106,7 +106,7 @@ end $$;
 
 create function daxenvo_private.ai_finish(op uuid,target uuid,outcome text,used_in int,used_out int)
 returns text language plpgsql security definer set search_path='' as $$
-declare a daxenvo_private.ai_attempt;
+declare a daxenvo_private.ai_attempt; current_hash text;
 begin
  select * into a from daxenvo_private.ai_attempt where operation=op and request_id=target
    and company_id=current_setting('daxenvo.ai_company')::uuid and actor=current_setting('daxenvo.ai_actor')::uuid for update;
@@ -115,10 +115,13 @@ begin
  if outcome is null or outcome not in ('completed','invalid','unavailable','timeout') then raise invalid_parameter_value; end if;
  if outcome in ('completed','invalid') and (used_in is null or used_out is null or used_in not between 0 and a.input_max or used_out not between 0 and a.output_max)
  then outcome:='unavailable'; end if;
+ current_hash:=daxenvo_private.ai_source(target);
  if outcome in ('unavailable','timeout') then used_in:=null; used_out:=null;
- elsif daxenvo_private.ai_source(target) is distinct from a.source then outcome:='stale'; end if;
+ elsif current_hash is distinct from a.source then outcome:='stale'; end if;
  update daxenvo_private.ai_attempt set state=outcome,finished=clock_timestamp(),input_used=used_in,output_used=used_out,
  charge=coalesce(used_in::bigint*a.input_rate+used_out::bigint*a.output_rate,a.reserved_cost) where operation=op;
+ if current_hash is null then return 'NOT_FOUND'; end if;
+ if current_hash<>a.source then return 'stale'; end if;
  return outcome;
 end $$;
 

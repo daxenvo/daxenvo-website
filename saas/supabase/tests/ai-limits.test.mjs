@@ -3,7 +3,13 @@ import { before, after, beforeEach, afterEach, test } from 'node:test';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
-const db = new PGlite();
+// Native mode requires a fresh disposable localhost cluster. Roles are cluster-wide.
+const native = process.env.J12_TEST_PG_PORT ? await import('postgres') : null;
+const options={host:'127.0.0.1',port:Number(process.env.J12_TEST_PG_PORT),database:'postgres',
+  username:process.env.J12_TEST_PG_USER,password:process.env.J12_TEST_PG_PASSWORD,max:1,onnotice:()=>{}};
+const connect=()=>native.default(options);
+const sql=native ? connect() : null;
+const db=sql ? {exec:q=>sql.unsafe(q),query:async(q,params=[])=>({rows:[...await sql.unsafe(q,params)]}),close:()=>sql.end()} : new PGlite();
 const company=randomUUID(), other=randomUUID(), actor=randomUUID(), target=randomUUID();
 let source;
 before(async () => {
@@ -72,4 +78,28 @@ test('attempt and per-user ceilings before dispatch',async()=>{
   await gateway();const op=randomUUID();await reserve(op);await finish(op,'invalid',1,1);
   assert.equal(await reserve(),'QUOTA_LIMIT');
   await db.exec('reset role; update daxenvo_private.ai_policy set user_daily=5,attempts=1');await gateway();assert.equal(await reserve(),'ATTEMPT_LIMIT');
+});
+
+test('two independent PostgreSQL sessions compete for the final project slot',{skip:!native},async()=>{
+  // This fixture must be visible to both new sessions. The surrounding test transaction is empty.
+  const second=randomUUID();
+  const clients=[connect(),connect()];
+  let ready=0, release;
+  const barrier=new Promise(resolve=>{release=resolve});
+  try {
+    await clients[0].unsafe('update daxenvo_private.ai_project set simultaneous=1');
+    await clients[0].unsafe("insert into quote_requests(id,company_id,prospect_id,title,description) select $1,company_id,prospect_id,title,description from quote_requests where id=$2",[second,target]);
+    const result=await Promise.all(clients.map((client,i)=>client.begin(async tx=>{
+      const [{pid}]=await tx.unsafe('select pg_backend_pid() as pid');
+      await tx.unsafe('set local role daxenvo_ai_gateway');
+      await tx.unsafe("select set_config('daxenvo.ai_company',$1,true),set_config('daxenvo.ai_actor',$2,true)",[company,actor]);
+      if(++ready===2)release(); await barrier;
+      const [{v}]=await tx.unsafe('select daxenvo_private.ai_reserve($1,$2,$3,100) as v',[randomUUID(),i?second:target,source]);
+      return {pid,v};
+    })));
+    assert.notEqual(result[0].pid,result[1].pid);
+    assert.equal(result.filter(r=>r.v==='QUOTA_LIMIT').length,1);
+    assert.equal(result.filter(r=>r.v.model==='offline').length,1);
+    assert.equal((await db.query('select count(*)::int as n from daxenvo_private.ai_attempt')).rows[0].n,1);
+  } finally {await Promise.all(clients.map(c=>c.end()))}
 });

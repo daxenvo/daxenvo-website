@@ -17,3 +17,10 @@ declare module "*service.server.mjs" {
     requiresHumanReview: boolean;
   }>;
 }
+
+declare module "*service.server.mjs" {
+  export function lireReponseIA(value: unknown): {
+    priorite: "elevee" | "moyenne" | "faible" | "a_preciser";
+    motif: string; actionRecommandee: string; informationsManquantes: string[]; requiresHumanReview: boolean;
+  };
+}
