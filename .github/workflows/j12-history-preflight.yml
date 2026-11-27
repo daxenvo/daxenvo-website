@@ -1,0 +1,60 @@
+name: J12-2 PostgreSQL preflight
+on:
+  push:
+    branches: [feature/j12-ai-integration]
+    paths: ['.github/j12-history-preflight']
+  workflow_call:
+    secrets:
+      J12_RUNTIME_DSN:
+        required: true
+permissions: {}
+jobs:
+  connect:
+    if: github.repository == 'daxenvo/daxenvo-website' && github.ref == 'refs/heads/feature/j12-ai-integration' && github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Prepare verified TLS
+        shell: bash
+        run: |
+          set -eu
+          command -v psql >/dev/null
+          curl -fsS --proto '=https' https://supabase-downloads.s3-ap-southeast-1.amazonaws.com/prod/ssl/prod-ca-2021.crt -o "$RUNNER_TEMP/project-ca.crt"
+          openssl x509 -in "$RUNNER_TEMP/project-ca.crt" -noout -checkend 0
+      - name: Authenticate and check the backend in a read-only transaction
+        shell: python
+        env:
+          DSN: ${{ secrets.J12_RUNTIME_DSN }}
+        run: |
+          import os, re, subprocess, sys
+          host = 'aws-1-eu-west-3.pooler.supabase.com'
+          user = 'daxenvo_ai_runtime.mniconjzkvvvwqoxtzwu'
+          value = os.environ.pop('DSN')
+          match = re.fullmatch(r'postgresql://' + re.escape(user) + r':([0-9a-f]{64})@' + re.escape(host) + r':5432/postgres', value)
+          if not match:
+              sys.exit('Invalid J12 runtime DSN format')
+          password = match.group(1)
+          print('::add-mask::' + password, flush=True)
+          env = dict(PATH=os.environ['PATH'], LC_ALL='C', PGHOST=host, PGPORT='5432',
+                     PGUSER=user, PGPASSWORD=password, PGDATABASE='postgres',
+                     PGCONNECT_TIMEOUT='8', PGSSLMODE='verify-full',
+                     PGSSLROOTCERT=os.path.join(os.environ['RUNNER_TEMP'], 'project-ca.crt'))
+          sql = """
+          BEGIN READ ONLY;
+          SELECT (current_user = 'daxenvo_ai_runtime' AND ssl)::int
+            FROM pg_stat_ssl WHERE pid = pg_backend_pid();
+          SET LOCAL ROLE daxenvo_ai_gateway;
+          SELECT (current_user = 'daxenvo_ai_gateway')::int;
+          ROLLBACK;
+          """
+          proc = subprocess.run(['psql','-X','-w','-qAt','-v','ON_ERROR_STOP=1'],
+                                input=sql, capture_output=True, text=True, env=env, timeout=20)
+          if proc.returncode:
+              err = proc.stderr.lower()
+              category = ('authentication' if 'password authentication failed' in err else
+                          'TLS' if 'certificate' in err or 'ssl' in err else
+                          'role' if 'permission denied' in err else 'connection or query')
+              sys.exit('PostgreSQL preflight failed: ' + category)
+          if proc.stdout.splitlines() != ['1','1']:
+              sys.exit('Unexpected runtime identity, backend TLS or gateway identity')
+          print('PostgreSQL preflight passed')
