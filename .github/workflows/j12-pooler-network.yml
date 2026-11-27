@@ -1,0 +1,20 @@
+name: J12 pooler connectivity
+on:
+  push:
+    branches: [feature/j12-ai-integration]
+    paths: ['.github/workflows/j12-pooler-network.yml']
+permissions: {}
+jobs:
+  network:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Resolve the session pooler and open its PostgreSQL port
+        shell: python
+        run: |
+          import socket
+          host = "aws-1-eu-west-3.pooler.supabase.com"
+          addresses = socket.getaddrinfo(host, 5432, socket.AF_INET, socket.SOCK_STREAM)
+          print(f"IPv4 DNS: {len(addresses)} result(s)", flush=True)
+          with socket.create_connection((host, 5432), timeout=8):
+              print("TCP 5432: connected")
