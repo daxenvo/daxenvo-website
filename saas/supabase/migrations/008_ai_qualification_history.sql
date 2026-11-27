@@ -79,6 +79,12 @@ end $$;
 grant create on schema daxenvo_private to daxenvo_ai_meter;
 alter function daxenvo_private.ai_reserve_analysis(uuid,uuid,text,int) owner to daxenvo_ai_meter;
 alter function daxenvo_private.ai_finish_analysis(uuid,uuid,text,int,int,jsonb) owner to daxenvo_ai_meter;
+-- Only the definer of the history-aware wrappers needs the underlying
+-- accounting functions. Applications must always use the wrappers.
+set local role daxenvo_ai_meter;
+revoke execute on function daxenvo_private.ai_reserve(uuid,uuid,text,int),
+ daxenvo_private.ai_finish(uuid,uuid,text,int,int) from daxenvo_ai_gateway;
+reset role;
 revoke create on schema daxenvo_private from daxenvo_ai_meter;
 revoke all on function daxenvo_private.ai_reserve_analysis(uuid,uuid,text,int),
  daxenvo_private.ai_finish_analysis(uuid,uuid,text,int,int,jsonb) from public,anon,authenticated,service_role;

@@ -53,7 +53,7 @@ async function validate() {
       await tx.unsafe("set local role daxenvo_ai_gateway");
       await tx.unsafe("set local statement_timeout='12s'");
       await tx`select set_config('daxenvo.ai_company',${a.company},true),set_config('daxenvo.ai_actor',${a.actor},true)`;
-      const [row]=await tx`select daxenvo_private.ai_reserve(${ops[i]},${targets[i]},${sources[i]},100) as result`;
+      const [row]=await tx`select daxenvo_private.ai_reserve_analysis(${ops[i]},${targets[i]},${sources[i]},100) as result`;
       return row.result;
     }
     let contender;

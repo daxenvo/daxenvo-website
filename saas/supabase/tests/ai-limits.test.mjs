@@ -35,10 +35,13 @@ async function gateway(tenant=company,who=actor){
   await db.query("select set_config('daxenvo.ai_company',$1,true),set_config('daxenvo.ai_actor',$2,true)",[tenant,who]);
 }
 async function reserve(op=randomUUID(), size=100){
-  return (await db.query('select daxenvo_private.ai_reserve($1,$2,$3,$4) as v',[op,target,source,size])).rows[0].v;
+  return (await db.query('select daxenvo_private.ai_reserve_analysis($1,$2,$3,$4) as v',[op,target,source,size])).rows[0].v;
 }
 async function finish(op,state,input,output){
-  return (await db.query('select daxenvo_private.ai_finish($1,$2,$3,$4,$5) as v',[op,target,state,input,output])).rows[0].v;
+  const result={analysePar:state==='completed'?'simulation':'regles',priorite:'moyenne',
+    motif:'Fixture',actionRecommandee:'Vérifier',informationsManquantes:[],requiresHumanReview:true};
+  return (await db.query('select daxenvo_private.ai_finish_analysis($1,$2,$3,$4,$5,$6::text::jsonb) as v',
+    [op,target,state,input,output,JSON.stringify(result)])).rows[0].v;
 }
 test('private access, RLS membership and tenant checks',async()=>{
   assert.equal((await db.query("select has_function_privilege('authenticated','daxenvo_private.ai_reserve(uuid,uuid,text,integer)','execute') ok")).rows[0].ok,false);
@@ -94,7 +97,7 @@ test('two independent PostgreSQL sessions compete for the final project slot',{s
       await tx.unsafe('set local role daxenvo_ai_gateway');
       await tx.unsafe("select set_config('daxenvo.ai_company',$1,true),set_config('daxenvo.ai_actor',$2,true)",[company,actor]);
       if(++ready===2)release(); await barrier;
-      const [{v}]=await tx.unsafe('select daxenvo_private.ai_reserve($1,$2,$3,100) as v',[randomUUID(),i?second:target,source]);
+      const [{v}]=await tx.unsafe('select daxenvo_private.ai_reserve_analysis($1,$2,$3,100) as v',[randomUUID(),i?second:target,source]);
       return {pid,v};
     })));
     assert.notEqual(result[0].pid,result[1].pid);
@@ -102,6 +105,23 @@ test('two independent PostgreSQL sessions compete for the final project slot',{s
     assert.equal(result.filter(r=>r.v.model==='offline').length,1);
     assert.equal((await db.query('select count(*)::int as n from daxenvo_private.ai_attempt')).rows[0].n,1);
   } finally {await Promise.all(clients.map(c=>c.end()))}
+});
+
+test('J12-2 only history-aware functions are executable by the gateway',async()=>{
+  const functions=[
+    ['ai_reserve(uuid,uuid,text,integer)',false],
+    ['ai_finish(uuid,uuid,text,integer,integer)',false],
+    ['ai_reserve_analysis(uuid,uuid,text,integer)',true],
+    ['ai_finish_analysis(uuid,uuid,text,integer,integer,jsonb)',true],
+  ];
+  for(const [signature,visible] of functions){
+    const {rows:[acl]}=await db.query(`select
+      has_function_privilege('daxenvo_ai_gateway',$1,'EXECUTE') as gateway,
+      has_function_privilege('daxenvo_ai_meter',$1,'EXECUTE') as meter,
+      has_function_privilege('authenticated',$1,'EXECUTE') as client,
+      has_function_privilege('anon',$1,'EXECUTE') as anonymous`,['daxenvo_private.'+signature]);
+    assert.deepEqual(acl,{gateway:visible,meter:true,client:false,anonymous:false});
+  }
 });
 
 test('J12-2 immutable simulation and fallback revisions, replay, stale source and tenant reads',async()=>{
