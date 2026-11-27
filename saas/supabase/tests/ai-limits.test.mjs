@@ -15,8 +15,8 @@ let source;
 before(async () => {
   await db.exec(`create schema daxenvo_private; create role anon; create role authenticated; create role service_role;
     create schema auth; create table auth.users(id uuid primary key);
-    create function auth.uid() returns uuid language sql as $$select null::uuid$$;`);
-  for(const file of ['001_company_foundation','002_company_permissions','007_ai_usage_limits']){
+    create function auth.uid() returns uuid language sql as $$select nullif(current_setting('request.actor',true),'')::uuid$$;`);
+  for(const file of ['001_company_foundation','002_company_permissions','007_ai_usage_limits','008_ai_qualification_history']){
     await db.exec(await readFile(new URL('../migrations/'+file+'.sql',import.meta.url),'utf8'));
   }
   await db.query('insert into auth.users values ($1)',[actor]);
@@ -102,4 +102,34 @@ test('two independent PostgreSQL sessions compete for the final project slot',{s
     assert.equal(result.filter(r=>r.v.model==='offline').length,1);
     assert.equal((await db.query('select count(*)::int as n from daxenvo_private.ai_attempt')).rows[0].n,1);
   } finally {await Promise.all(clients.map(c=>c.end()))}
+});
+
+test('J12-2 immutable simulation and fallback revisions, replay, stale source and tenant reads',async()=>{
+  const result={priorite:'moyenne',motif:'Simulation',actionRecommandee:'Vérifier',informationsManquantes:[],requiresHumanReview:true};
+  const reserveAnalysis=async(op,h=source)=>(await db.query('select daxenvo_private.ai_reserve_analysis($1,$2,$3,100) v',[op,target,h])).rows[0].v;
+  const settle=async(op,state)=>(await db.query('select daxenvo_private.ai_finish_analysis($1,$2,$3,5,5,$4) v',
+    [op,target,state,JSON.stringify({...result,analysePar:state==='completed'?'simulation':'regles'})])).rows[0].v;
+  await gateway(other);
+  assert.equal(await reserveAnalysis(randomUUID()),'NOT_FOUND');
+  await gateway();
+  const a=randomUUID(),b=randomUUID(),c=randomUUID();
+  assert.equal((await reserveAnalysis(a)).model,'offline');
+  assert.equal(await reserveAnalysis(b),'CONFLICT');
+  assert.equal(await settle(a,'invalid'),'invalid');
+  assert.equal((await reserveAnalysis(b)).model,'offline');
+  assert.equal(await settle(b,'completed'),'completed');
+  assert.equal(await settle(b,'completed'),'completed');
+  await db.exec("reset role; update quote_requests set description='second projet'");
+  const h=(await db.query('select daxenvo_private.ai_source($1) h',[target])).rows[0].h;
+  await gateway(); assert.equal((await reserveAnalysis(c,h)).model,'offline');
+  await db.exec("reset role; update quote_requests set description='troisième projet'");
+  await gateway(); assert.equal(await settle(c,'completed'),'stale');
+  await db.exec('reset role');
+  assert.equal((await db.query("select has_table_privilege('authenticated','public.request_ai_qualifications','insert') or has_table_privilege('authenticated','public.request_ai_qualifications','update') or has_table_privilege('authenticated','public.request_ai_qualifications','delete') v")).rows[0].v,false);
+  await db.query("select set_config('request.actor',$1,true)",[actor]);
+  await db.exec('set local role authenticated');
+  const history=await db.query("select revision,outcome,model,prompt_version from request_ai_qualifications order by revision");
+  assert.deepEqual(history.rows.map(r=>[r.revision,r.outcome,r.model,r.prompt_version]),[[1,'invalid','offline','qualification-signals-v2'],[2,'completed','offline','qualification-signals-v2']]);
+  await db.query("select set_config('request.actor',$1,true)",[randomUUID()]);
+  assert.equal((await db.query('select * from request_ai_qualifications')).rows.length,0);
 });
