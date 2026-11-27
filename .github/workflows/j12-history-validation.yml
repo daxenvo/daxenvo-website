@@ -1,0 +1,65 @@
+name: J12-2 qualification history
+on:
+  push:
+    branches: [feature/j12-ai-integration]
+    paths: ['.github/j12-history-run']
+permissions: {}
+concurrency:
+  group: j12-history-validation
+  cancel-in-progress: false
+jobs:
+  validate:
+    if: github.repository == 'daxenvo/daxenvo-website' && github.ref == 'refs/heads/feature/j12-ai-integration' && github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - name: Build reviewed source without credentials
+        shell: bash
+        run: |
+          set -eu
+          git init -q .
+          git fetch -q --depth=1 https://github.com/daxenvo/daxenvo-website.git 238ebc27dd0f31d33580c8cf98db675dc6817e12
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = 238ebc27dd0f31d33580c8cf98db675dc6817e12
+          git fetch -q --depth=1 https://github.com/daxenvo/daxenvo-website.git "$GITHUB_SHA"
+          git show FETCH_HEAD:saas/validation/j12-history.mjs > saas/validation/j12-history.mjs
+          echo '4a88257d23dfe34a3cf64ebc8cbe5ea6be93f5973d1b5eaa5b1d230fcc50ca42  saas/validation/j12-history.mjs' | sha256sum -c -
+          nodebin="$(find "$RUNNER_TOOL_CACHE/node" -path '*/24.*/x64/bin' -type d | sort -V | tail -1)"
+          test -n "$nodebin"
+          echo "$nodebin" >> "$GITHUB_PATH"
+          export PATH="$nodebin:$PATH"
+          cd saas
+          npm ci --no-audit --no-fund
+          NEXT_TELEMETRY_DISABLED=1 npm run build
+          curl -fsS --proto '=https' https://supabase-downloads.s3-ap-southeast-1.amazonaws.com/prod/ssl/prod-ca-2021.crt -o "$RUNNER_TEMP/project-ca.crt"
+          openssl x509 -in "$RUNNER_TEMP/project-ca.crt" -noout -checkend 0
+      - name: Verify authenticated qualification history
+        shell: bash
+        working-directory: saas
+        env:
+          J12_FIXTURES: ${{ secrets.J12_FIXTURES }}
+          DAXENVO_AI_DATABASE_URL: ${{ secrets.J12_RUNTIME_DSN }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.J12_PUBLISHABLE_KEY }}
+          SUPABASE_URL: https://mniconjzkvvvwqoxtzwu.supabase.co
+          DAXENVO_AI_SESSION_POOLER_HOST: aws-1-eu-west-3.pooler.supabase.com
+          DAXENVO_AI_MODE: simulation
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: |
+          set -eu
+          node --input-type=module <<'JS'
+          function mask(v) {
+            if(typeof v==='object') { for(const x of Object.values(v)) mask(x); return; }
+            if(typeof v!=='string'||!v.length) throw Error('Missing masking input');
+            console.log('::add-mask::'+v.replaceAll('%','%25').replaceAll('\r','%0D').replaceAll('\n','%0A'));
+          }
+          mask(JSON.parse(process.env.J12_FIXTURES));
+          const uri=new URL(process.env.DAXENVO_AI_DATABASE_URL);
+          mask(uri.password);mask(decodeURIComponent(uri.password));mask(uri.href);
+          mask(process.env.SUPABASE_PUBLISHABLE_KEY);
+          JS
+          export NODE_EXTRA_CA_CERTS="$RUNNER_TEMP/project-ca.crt"
+          env -u J12_FIXTURES node_modules/.bin/next start --hostname 127.0.0.1 --port 3137 >/dev/null 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true' EXIT
+          curl --retry 12 --retry-connrefused --retry-delay 1 -fsS http://127.0.0.1:3137/connexion -o /dev/null
+          node validation/j12-history.mjs
