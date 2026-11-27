@@ -49,6 +49,45 @@ const historySchema = z.object({
   ),
   nextCursor: z.number().nullable(),
 });
+const analysisHistory = z.object({
+  data: z.array(z.object({
+    operation: z.uuid(), revision: z.number().int().positive(), created_at: z.string(),
+    model: z.string(), outcome: z.enum(["completed", "invalid", "timeout", "unavailable"]),
+    result: qualificationSchema.extend({analysePar: z.enum(["simulation","regles"])}),
+  })),
+  nextCursor: z.number().nullable(),
+});
+const fallbackReason = {
+  invalid: "réponse invalide", timeout: "délai dépassé", unavailable: "simulateur indisponible",
+};
+function SimulatedQualifications({ id }: { id: string }) {
+  const path = "/api/quote-requests/" + id + "/ai-analysis";
+  const [before, setBefore] = useState(0);
+  const page = usePage(path + (before ? "?before=" + before : ""), analysisHistory);
+  return (
+    <section className="panel client-panel" aria-label="Qualification IA simulée">
+      <h2>Qualification IA simulée</h2>
+      <Action title="Analyser en simulation" path={path} operation onResult={() => {
+        setBefore(0);
+        page.refresh();
+      }} />
+      {!page.data ? <Waiting error={page.error} /> : <>
+        {page.data.data.length === 0 && <p>Aucune analyse simulée enregistrée.</p>}
+        {page.data.data.map(q => <article className="client-entry" key={q.operation}>
+          <h3>{q.outcome === "completed" ? "Simulation" : "Repli sur les règles J6"} · Révision {q.revision}</h3>
+          <p>{dateLabel(q.created_at)} · Modèle simulé · {q.model}</p>
+          {q.outcome !== "completed" && <p>Motif du repli · {fallbackReason[q.outcome]}</p>}
+          <p><strong>Priorité {label(q.result.priorite).toLowerCase()}</strong> · {q.result.motif}</p>
+          <p>Informations manquantes · {q.result.informationsManquantes.join(", ") || "Aucune"}</p>
+          <p>Action recommandée · {q.result.actionRecommandee}</p>
+          {q.result.requiresHumanReview && <strong>Vérification humaine requise</strong>}
+        </article>)}
+        <Pager older={page.data.nextCursor !== null ? () => setBefore(page.data!.nextCursor!) : undefined}
+          first={before ? () => setBefore(0) : undefined} />
+      </>}
+    </section>
+  );
+}
 export function Qualifications({ id }: { id: string }) {
   const path = "/api/quote-requests/" + id + "/qualifications";
   const [before, setBefore] = useState(0);
@@ -57,6 +96,8 @@ export function Qualifications({ id }: { id: string }) {
     historySchema,
   );
   return (
+    <>
+    <SimulatedQualifications key={id} id={id} />
     <section className="panel client-panel">
       <h2>Qualification par règles</h2>
       <Action
@@ -114,6 +155,7 @@ export function Qualifications({ id }: { id: string }) {
         </>
       )}
     </section>
+    </>
   );
 }
 function Pager({ older, first }: { older?: () => void; first?: () => void }) {

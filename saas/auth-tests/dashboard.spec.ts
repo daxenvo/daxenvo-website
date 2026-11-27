@@ -235,3 +235,35 @@ test("J11 — changement de contexte et déconnexion propagés au second onglet"
     other.getByRole("heading", { name: "Entreprise Beta" }),
   ).toHaveCount(0);
 });
+
+for(const width of [1280,390]) test("J12-2 historique et analyse simulée à "+width+" px",async({page})=>{
+  await page.setViewportSize({width,height:844});
+  await login(page);
+  const id=await fixture(page);
+  const op="20000000-0000-4000-8000-000000000099";
+  let calls=0, release!:()=>void;
+  const gate=new Promise<void>(resolve=>{release=resolve});
+  const entry={operation:op,revision:1,created_at:"2026-11-27T10:00:00Z",model:"simulation-test",outcome:"invalid",
+    result:{priorite:"moyenne",motif:"Calendrier déclaré",actionRecommandee:"Clarifier le budget",analysePar:"regles",
+      informationsManquantes:["budget"],requiresHumanReview:true}};
+  await page.route("**/ai-analysis",async route=>{
+    if(route.request().method()==="GET") return route.fulfill({json:{data:calls?[entry]:[],nextCursor:null}});
+    expect(route.request().postDataJSON().operation).toMatch(/^[\da-f-]{36}$/);
+    calls++;
+    if(calls>1) return route.fulfill({status:429,json:{error:"BUDGET_LIMIT"}});
+    await gate;
+    return route.fulfill({json:{operation:op,state:"invalid",result:entry.result}});
+  });
+  await page.goto("/espace?vue=demandes&id="+id+"&onglet=qualification");
+  const panel=page.getByRole("region",{name:"Qualification IA simulée"});
+  await expect(panel.getByText("Aucune analyse simulée enregistrée.")).toBeVisible();
+  const analyze=panel.getByRole("button",{name:"Analyser en simulation"});
+  await analyze.click();
+  await expect(panel.getByRole("button",{name:"Traitement en cours…"})).toBeDisabled();
+  release();
+  await expect(panel.getByText("Repli sur les règles J6 · Révision 1")).toBeVisible();
+  await expect(panel.getByText("Action recommandée · Clarifier le budget")).toBeVisible();
+  expect(calls).toBe(1);
+  await analyze.click();
+  await expect(panel.getByText("Le plafond de dépenses autorisé est atteint.")).toBeVisible();
+});

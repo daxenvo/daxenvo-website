@@ -89,7 +89,12 @@ export function AccessForm({
 
 export const messages: Record<string, string> = {
   SOURCE_CHANGED:
-    "La demande a changé pendant la qualification. Relisez sa version actuelle avant de relancer les règles.",
+    "La demande a changé pendant la qualification. Relisez sa version actuelle avant de relancer la qualification.",
+  QUOTA_LIMIT: "Le quota d’analyses est atteint ou une analyse est en cours.",
+  BUDGET_LIMIT: "Le plafond de dépenses autorisé est atteint.",
+  ATTEMPT_LIMIT: "Le nombre maximal de tentatives est atteint pour cette version de la demande.",
+  INPUT_LIMIT: "Les informations à analyser dépassent la limite configurée.",
+  CONFLICT: "Une analyse existe déjà ou reste en cours pour cette demande. Consultez son historique.",
   COMPANY_CHANGED:
     "L’entreprise active a changé. Rouvrez votre espace avant de continuer.",
   UNAUTHENTICATED: "Votre session a expiré. Reconnectez-vous.",
