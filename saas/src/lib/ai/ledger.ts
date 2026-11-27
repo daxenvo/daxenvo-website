@@ -1,14 +1,15 @@
 import "server-only";
 import postgres from "postgres";
+import { ledgerConnection } from "./connection";
 import type { Ledger, Scope } from "./analysis.server";
 
 let pool: ReturnType<typeof postgres> | undefined;
 export function simulatedLedger(): Ledger | null {
   if (process.env.DAXENVO_AI_MODE !== "simulation" || !process.env.DAXENVO_AI_DATABASE_URL) return null;
-  const url = new URL(process.env.DAXENVO_AI_DATABASE_URL);
-  if (!["postgresql:","postgres:"].includes(url.protocol) || url.username !== "daxenvo_ai_runtime" ||
-      !url.password || url.search || url.hash || !url.hostname) return null;
-  pool ??= postgres(url.toString(),{ssl:"verify-full",max:3,prepare:false,connect_timeout:4,idle_timeout:10,
+  const connection = ledgerConnection(process.env.DAXENVO_AI_DATABASE_URL, process.env.SUPABASE_URL,
+    process.env.DAXENVO_AI_SESSION_POOLER_HOST);
+  if (!connection) return null;
+  pool ??= postgres({...connection,max:3,prepare:false,connect_timeout:4,idle_timeout:10,
     onnotice:()=>{},connection:{application_name:"daxenvo-j12"}});
   const sql = pool;
   async function transaction<T>(scope:Scope, work:(tx:postgres.TransactionSql)=>Promise<T>) {
