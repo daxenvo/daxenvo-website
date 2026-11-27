@@ -1,6 +1,6 @@
 // PostgREST double for route tests. Tenant isolation must come from the route's filters.
 import { createHash, createHmac, randomUUID } from "node:crypto";
-const tables = new Map([["prospects", new Map()], ["quote_requests", new Map()], ["followups", new Map()], ["appointments", new Map()], ["request_qualifications", new Map()]]);
+const tables = new Map([["prospects", new Map()], ["quote_requests", new Map()], ["followups", new Map()], ["appointments", new Map()], ["request_qualifications", new Map()], ["request_ai_qualifications", new Map()]]);
 
 const nextQualificationError = new Map();
 

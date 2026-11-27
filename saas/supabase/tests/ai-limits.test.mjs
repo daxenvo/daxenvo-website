@@ -107,9 +107,12 @@ test('two independent PostgreSQL sessions compete for the final project slot',{s
 test('J12-2 immutable simulation and fallback revisions, replay, stale source and tenant reads',async()=>{
   const result={priorite:'moyenne',motif:'Simulation',actionRecommandee:'Vérifier',informationsManquantes:[],requiresHumanReview:true};
   const reserveAnalysis=async(op,h=source)=>(await db.query('select daxenvo_private.ai_reserve_analysis($1,$2,$3,100) v',[op,target,h])).rows[0].v;
-  const settle=async(op,state)=>(await db.query('select daxenvo_private.ai_finish_analysis($1,$2,$3,5,5,$4) v',
+  const settle=async(op,state)=>(await db.query('select daxenvo_private.ai_finish_analysis($1,$2,$3,5,5,$4::text::jsonb) v',
     [op,target,state,JSON.stringify({...result,analysePar:state==='completed'?'simulation':'regles'})])).rows[0].v;
-  await gateway(other);
+  const otherOwner=randomUUID();
+  await db.query('insert into auth.users values ($1)',[otherOwner]);
+  await db.query("insert into company_memberships values ($1,$2,'owner')",[other,otherOwner]);
+  await gateway(other,otherOwner);
   assert.equal(await reserveAnalysis(randomUUID()),'NOT_FOUND');
   await gateway();
   const a=randomUUID(),b=randomUUID(),c=randomUUID();
@@ -130,6 +133,47 @@ test('J12-2 immutable simulation and fallback revisions, replay, stale source an
   await db.exec('set local role authenticated');
   const history=await db.query("select revision,outcome,model,prompt_version from request_ai_qualifications order by revision");
   assert.deepEqual(history.rows.map(r=>[r.revision,r.outcome,r.model,r.prompt_version]),[[1,'invalid','offline','qualification-signals-v2'],[2,'completed','offline','qualification-signals-v2']]);
-  await db.query("select set_config('request.actor',$1,true)",[randomUUID()]);
+  await db.query("select set_config('request.actor',$1,true)",[otherOwner]);
   assert.equal((await db.query('select * from request_ai_qualifications')).rows.length,0);
+});
+
+test('J12-2 settlement waits for a concurrent source update and records no stale revision', {skip:!native}, async()=>{
+  const writer=connect(), analyzer=connect(), operation=randomUUID();
+  const scope=async tx=>{
+    await tx.unsafe('set local role daxenvo_ai_gateway');
+    await tx.unsafe("select set_config('daxenvo.ai_company',$1,true),set_config('daxenvo.ai_actor',$2,true)",[company,actor]);
+  };
+  let pending;
+  try {
+    await analyzer.begin(async tx=>{
+      await scope(tx);
+      const [row]=await tx.unsafe('select daxenvo_private.ai_reserve_analysis($1,$2,$3,100) as grant',[operation,target,source]);
+      assert.equal(row.grant.model,'offline');
+    });
+    const [{pid}]=await analyzer.unsafe('select pg_backend_pid() pid');
+    await writer.begin(async tx=>{
+      const [{blocker}]=await tx.unsafe('select pg_backend_pid() blocker');
+      await tx.unsafe("update quote_requests set description='Projet modifié en parallèle' where id=$1",[target]);
+      pending=analyzer.begin(async settlement=>{
+        await scope(settlement);
+        await settlement.unsafe("set local statement_timeout='8s'");
+        return settlement.unsafe("select daxenvo_private.ai_finish_analysis($1,$2,'completed',5,5,'{}') as state",[operation,target]);
+      });
+      // Start the lazy transaction and keep any rejection handled until awaited.
+      pending=Promise.resolve(pending);
+      pending.catch(()=>{});
+      let blocked=false;
+      for(let poll=0;poll<100 && !blocked;poll++){
+        blocked=(await db.query('select $1::int=any(pg_blocking_pids($2)) as blocked',[blocker,pid])).rows[0].blocked;
+        if(!blocked) await new Promise(resolve=>setTimeout(resolve,20));
+      }
+      assert.equal(blocked,true,'settlement must actually wait for the editor');
+    });
+    assert.equal((await pending)[0].state,'stale');
+    assert.equal((await db.query('select count(*)::int n from request_ai_qualifications where operation=$1',[operation])).rows[0].n,0);
+    assert.equal((await db.query('select state from daxenvo_private.ai_attempt where operation=$1',[operation])).rows[0].state,'stale');
+  } finally {
+    await Promise.allSettled([pending]);
+    await Promise.all([writer.end(),analyzer.end()]);
+  }
 });

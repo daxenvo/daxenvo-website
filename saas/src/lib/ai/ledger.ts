@@ -22,6 +22,6 @@ export function simulatedLedger(): Ledger | null {
   }
   return {
     reserve:(s,hash,bound)=>transaction(s,async tx=>(await tx`select daxenvo_private.ai_reserve_analysis(${s.operation},${s.request},${hash},${bound}) as result`)[0].result),
-    finish:(s,state,input,output,result)=>transaction(s,async tx=>(await tx`select daxenvo_private.ai_finish_analysis(${s.operation},${s.request},${state},${input},${output},${JSON.stringify(result)}::jsonb) as result`)[0].result as string),
+    finish:(s,state,input,output,result)=>transaction(s,async tx=>(await tx`select daxenvo_private.ai_finish_analysis(${s.operation},${s.request},${state},${input},${output},${JSON.stringify(result)}::text::jsonb) as result`)[0].result as string),
   };
 }

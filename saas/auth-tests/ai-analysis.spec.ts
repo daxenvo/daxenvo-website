@@ -16,3 +16,18 @@ test("AI authorization and disabled configuration through Next.js",async({reques
   await request.post("/auth/entreprise",{headers,maxRedirects:0,form:{company_id:"20000000-0000-4000-8000-000000000002"}});
   expect((await request.post(url,{headers,data})).status()).toBe(404);
 });
+
+test("J12-2 reads history only for objects of the authenticated active company",async({request})=>{
+  expect((await request.get(endpoint(randomUUID()))).status()).toBe(401);
+  await request.post("/auth/connexion",{headers,maxRedirects:0,form:{email:"alice@example.invalid",password:"test-only"}});
+  const prospect=await request.post("/api/prospects",{headers,data:{name:"Devis test",sector:"Test",city:"Paris"}});
+  const row=await request.post("/api/quote-requests",{headers,data:{title:"Test",description:"Lecture simulée",prospect_id:(await prospect.json()).data.id}});
+  const url=endpoint((await row.json()).data.id);
+  const own=await request.get(url);
+  expect(own.status()).toBe(200);
+  expect(await own.json()).toEqual({data:[],nextCursor:null});
+  expect(own.headers()["cache-control"]).toContain("no-store");
+  expect((await request.get(url+"?before=0")).status()).toBe(400);
+  await request.post("/auth/entreprise",{headers,maxRedirects:0,form:{company_id:"20000000-0000-4000-8000-000000000002"}});
+  expect((await request.get(url)).status()).toBe(404);
+});
