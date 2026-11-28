@@ -28,20 +28,20 @@ jobs:
         run: |
           import os, re, subprocess, sys
           host = 'aws-1-eu-west-3.pooler.supabase.com'
-          user = 'daxenvo_ai_runtime.mniconjzkvvvwqoxtzwu'
+          source_user = 'daxenvo_ai_runtime.mniconjzkvvvwqoxtzwu'
           value = os.environ.pop('DSN')
-          match = re.fullmatch(r'postgresql://' + re.escape(user) + r':([0-9a-f]{64})@' + re.escape(host) + r':5432/postgres', value)
+          match = re.fullmatch(r'postgresql://' + re.escape(source_user) + r':([0-9a-f]{64})@' + re.escape(host) + r':5432/postgres', value)
           if not match:
               sys.exit('Invalid J12 runtime DSN format')
           password = match.group(1)
           print('::add-mask::' + password, flush=True)
           env = dict(PATH=os.environ['PATH'], LC_ALL='C', PGHOST=host, PGPORT='5432',
-                     PGUSER=user, PGPASSWORD=password, PGDATABASE='postgres',
+                     PGUSER='daxenvo_ai_runtime_j122.mniconjzkvvvwqoxtzwu', PGPASSWORD=password, PGDATABASE='postgres',
                      PGCONNECT_TIMEOUT='8', PGSSLMODE='verify-full',
                      PGSSLROOTCERT=os.path.join(os.environ['RUNNER_TEMP'], 'project-ca.crt'))
           sql = """
           BEGIN READ ONLY;
-          SELECT (current_user = 'daxenvo_ai_runtime' AND ssl)::int
+          SELECT (current_user = 'daxenvo_ai_runtime_j122' AND ssl)::int
             FROM pg_stat_ssl WHERE pid = pg_backend_pid();
           SET LOCAL ROLE daxenvo_ai_gateway;
           SELECT (current_user = 'daxenvo_ai_gateway')::int;
