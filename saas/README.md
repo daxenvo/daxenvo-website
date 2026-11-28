@@ -227,13 +227,13 @@ Aucun texte libre, identifiant ou secret ne figure dans son message. Le schéma 
 la réponse avant restitution. Aucun outil commercial n’est accessible.
 
 La migration additive 007 démarre sans politiques de consommation. Après autorisation
-d’installation, l’opérateur devra provisionner un login dédié `daxenvo_ai_runtime`
+d’installation, l’opérateur devra provisionner un login dédié `daxenvo_ai_runtime_j122`
 NOINHERIT NOBYPASSRLS, sans privilège administratif, membre uniquement de
 `daxenvo_ai_gateway`, puis configurer son URL TLS vérifiée dans
 `DAXENVO_AI_DATABASE_URL` côté serveur. Le rôle de connexion ne doit avoir aucun droit
 métier propre. Pour Supavisor en mode session, renseigner aussi
 `DAXENVO_AI_SESSION_POOLER_HOST` avec l’hôte affiché dans **Connect → Session pooler**
-et utiliser le login `daxenvo_ai_runtime.<référence du projet>` sur le port 5432.
+et utiliser le login `daxenvo_ai_runtime_j122.<référence du projet>` sur le port 5432.
 La référence est vérifiée contre `SUPABASE_URL`. Chaque transaction sélectionne le rôle privé et fixe l’acteur et
 l’entreprise issus de la session vérifiée. Aucune RPC publique n’est ajoutée.
 L’opérateur configure une ligne ai_project et une ai_policy par entreprise autorisée.

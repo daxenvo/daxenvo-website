@@ -8,7 +8,7 @@ export function ledgerConnection(dsn: string, projectUrl: string | undefined, po
         !db.password || db.pathname !== "/postgres" || db.search || db.hash ||
         (db.port && db.port !== "5432")) return null;
 
-    const role = "daxenvo_ai_runtime";
+    const role = "daxenvo_ai_runtime_j122";
     const direct = db.hostname === `db.${ref}.supabase.co` && db.username === role;
     const pooled = db.hostname === poolerHost && /^[a-z0-9-]+\.pooler\.supabase\.com$/.test(db.hostname) &&
       db.username === `${role}.${ref}`;

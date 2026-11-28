@@ -2,7 +2,7 @@
 # No secret in arguments, output, source files or shell history.
 $ErrorActionPreference = 'Stop'
 $repo = 'daxenvo/daxenvo-website'
-$role = 'daxenvo_ai_runtime.mniconjzkvvvwqoxtzwu'
+$role = 'daxenvo_ai_runtime_j122.mniconjzkvvvwqoxtzwu'
 $pooler = 'aws-1-eu-west-3.pooler.supabase.com'
 gh auth status --hostname github.com *> $null
 if ($LASTEXITCODE -ne 0) { throw 'Connectez GitHub CLI avant de continuer.' }
