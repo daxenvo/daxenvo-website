@@ -23,12 +23,9 @@ jobs:
         run: |
           set -eu
           git init -q .
-          git fetch -q --depth=1 https://github.com/daxenvo/daxenvo-website.git 238ebc27dd0f31d33580c8cf98db675dc6817e12
+          git fetch -q --depth=1 https://github.com/daxenvo/daxenvo-website.git 2318af1d440f9c45846437707fdf5bfc24808e41
           git checkout -q --detach FETCH_HEAD
-          test "$(git rev-parse HEAD)" = 238ebc27dd0f31d33580c8cf98db675dc6817e12
-          git fetch -q --depth=1 https://github.com/daxenvo/daxenvo-website.git "$GITHUB_SHA"
-          git show FETCH_HEAD:saas/validation/j12-history.mjs > saas/validation/j12-history.mjs
-          echo '4a88257d23dfe34a3cf64ebc8cbe5ea6be93f5973d1b5eaa5b1d230fcc50ca42  saas/validation/j12-history.mjs' | sha256sum -c -
+          test "$(git rev-parse HEAD)" = 2318af1d440f9c45846437707fdf5bfc24808e41
           nodebin="$(find "$RUNNER_TOOL_CACHE/node" -path '*/24.*/x64/bin' -type d | sort -V | tail -1)"
           test -n "$nodebin"
           echo "$nodebin" >> "$GITHUB_PATH"
@@ -51,6 +48,12 @@ jobs:
           NEXT_TELEMETRY_DISABLED: '1'
         run: |
           set -eu
+          case "$DAXENVO_AI_DATABASE_URL" in
+            postgresql://daxenvo_ai_runtime.mniconjzkvvvwqoxtzwu:*)
+              DAXENVO_AI_DATABASE_URL="postgresql://daxenvo_ai_runtime_j122.${DAXENVO_AI_DATABASE_URL#postgresql://daxenvo_ai_runtime.}" ;;
+            postgresql://daxenvo_ai_runtime_j122.mniconjzkvvvwqoxtzwu:*) ;;
+            *) exit 1 ;;
+          esac
           node --input-type=module <<'JS'
           function mask(v) {
             if(typeof v==='object') { for(const x of Object.values(v)) mask(x); return; }

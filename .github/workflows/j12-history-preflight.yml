@@ -28,9 +28,9 @@ jobs:
         run: |
           import os, re, subprocess, sys
           host = 'aws-1-eu-west-3.pooler.supabase.com'
-          source_user = 'daxenvo_ai_runtime.mniconjzkvvvwqoxtzwu'
+          source_user = r'daxenvo_ai_runtime(?:_j122)?\.mniconjzkvvvwqoxtzwu'
           value = os.environ.pop('DSN')
-          match = re.fullmatch(r'postgresql://' + re.escape(source_user) + r':([0-9a-f]{64})@' + re.escape(host) + r':5432/postgres', value)
+          match = re.fullmatch(r'postgresql://' + source_user + r':([0-9a-f]{64})@' + re.escape(host) + r':5432/postgres', value)
           if not match:
               sys.exit('Invalid J12 runtime DSN format')
           password = match.group(1)
