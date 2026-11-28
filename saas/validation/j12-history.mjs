@@ -59,7 +59,7 @@ async function run(){
     check(row?.operation===first && row.revision===1 && row.created_by===a.actor && j6?.result.analysePar==='regles' && j6.operation===fallback,'persisted results');
     for(const [own,other] of [[A,B],[B,A]]){
       const res=await table(own,'select=operation&company_id=eq.'+other.f.company);
-      check(res.ok() && (await res.json()).length===0,'RLS');
+      check(res.ok && (await res.json()).length===0,'RLS');
       check((await api(own,other.f.request,'/ai-analysis')).status()===404,'Next isolation');
     }
     for(const [method,body] of [['PATCH',{outcome:'invalid'}],['DELETE',undefined],['POST',{...row,request_id:a.request,company_id:a.company}]]){
@@ -110,7 +110,7 @@ async function run(){
     const [settled]=await scoped(tx=>tx`select daxenvo_private.ai_finish_analysis(${stale},${target},'completed',5,5,'{}'::jsonb) as v`);
     check(settled.v==='stale','obsolete result');
     const empty=await table(A,'select=operation&operation=eq.'+stale);
-    check(empty.ok() && (await empty.json()).length===0,'obsolete revision absent');
+    check(empty.ok && (await empty.json()).length===0,'obsolete revision absent');
     console.log('Next.js, persisted revisions, fallback, replay, RLS, UI and stale settlement verified');
   }finally{
     try{await restore?.();}finally{

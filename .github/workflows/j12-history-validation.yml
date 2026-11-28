@@ -28,7 +28,7 @@ jobs:
           test "$(git rev-parse HEAD)" = 2318af1d440f9c45846437707fdf5bfc24808e41
           git fetch -q --depth=1 https://github.com/daxenvo/daxenvo-website.git "$GITHUB_SHA"
           git show FETCH_HEAD:saas/validation/j12-history.mjs > saas/validation/j12-history.mjs
-          echo '0fba64457673ef4b5a67a1afac73c9a37223fa643bb569cbcb5a979e13a4bba0  saas/validation/j12-history.mjs' | sha256sum -c -
+          echo '716285a70989fb0ef04b936bdd71e9c2e2753c54a7180194648a72361c56ae90  saas/validation/j12-history.mjs' | sha256sum -c -
           nodebin="$(find "$RUNNER_TOOL_CACHE/node" -path '*/24.*/x64/bin' -type d | sort -V | tail -1)"
           test -n "$nodebin"
           echo "$nodebin" >> "$GITHUB_PATH"
