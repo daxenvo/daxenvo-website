@@ -5,7 +5,8 @@ import postgres from 'postgres';
 import {ledgerConnection} from '../src/lib/ai/connection.ts';
 
 const origin='http://127.0.0.1:3137';
-function check(value,stage){if(!value)throw Error(stage);}
+class CheckFailure extends Error {}
+function check(value,stage){if(!value)throw new CheckFailure(stage);}
 async function run(){
   const {a,b}=JSON.parse(process.env.J12_FIXTURES);
   const base=process.env.SUPABASE_URL;
@@ -43,6 +44,11 @@ async function run(){
   }
   let restore;
   try {
+    const guest=await browser.newContext({baseURL:origin});
+    try{
+      const unauth=await guest.request.get('/api/quote-requests/'+a.request+'/ai-analysis');
+      check(unauth.status()===401,'anonymous API read');
+    }finally{await guest.close();}
     const A=await login(a),B=await login(b);
     check((await history(A)).length===0 && (await history(B)).length===0,'fixture baseline');
     const first=operation(),fallback=operation();
@@ -77,8 +83,11 @@ async function run(){
     await page.goto(origin+'/espace?vue=demandes&id='+a.request+'&onglet=qualification');
     await page.getByRole('heading',{name:'Simulation · Révision 2',exact:true}).waitFor();
     await page.getByRole('heading',{name:'Simulation · Révision 1',exact:true}).waitFor();
-    const bpage=await B.ctx.newPage();await bpage.goto(origin+'/espace?vue=demandes&id='+b.request+'&onglet=qualification');
+    const bpage=await B.ctx.newPage();
+    await bpage.setViewportSize({width:390,height:844});
+    await bpage.goto(origin+'/espace?vue=demandes&id='+b.request+'&onglet=qualification');
     await bpage.getByRole('heading',{name:'Repli sur les règles J6 · Révision 1',exact:true}).waitFor();
+    check(await bpage.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'mobile overflow');
     const stale=operation(),target=a.contentionRequests[0];
     const res=await api(A,target);check(res.ok(),'stale fixture');
     const {data:s}=await res.json();
@@ -113,4 +122,4 @@ async function run(){
     }
   }
 }
-run().catch(()=>{console.error('J12-2 campaign incomplete. Inspect fixture state before repeating.');process.exitCode=1;});
+run().catch(error=>{console.error('J12-2 campaign incomplete', error instanceof CheckFailure ? error.message : 'technical failure');process.exitCode=1;});

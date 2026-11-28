@@ -26,6 +26,9 @@ jobs:
           git fetch -q --depth=1 https://github.com/daxenvo/daxenvo-website.git 2318af1d440f9c45846437707fdf5bfc24808e41
           git checkout -q --detach FETCH_HEAD
           test "$(git rev-parse HEAD)" = 2318af1d440f9c45846437707fdf5bfc24808e41
+          git fetch -q --depth=1 https://github.com/daxenvo/daxenvo-website.git "$GITHUB_SHA"
+          git show FETCH_HEAD:saas/validation/j12-history.mjs > saas/validation/j12-history.mjs
+          echo '0fba64457673ef4b5a67a1afac73c9a37223fa643bb569cbcb5a979e13a4bba0  saas/validation/j12-history.mjs' | sha256sum -c -
           nodebin="$(find "$RUNNER_TOOL_CACHE/node" -path '*/24.*/x64/bin' -type d | sort -V | tail -1)"
           test -n "$nodebin"
           echo "$nodebin" >> "$GITHUB_PATH"
@@ -60,7 +63,7 @@ jobs:
             if(typeof v!=='string'||!v.length) throw Error('Missing masking input');
             console.log('::add-mask::'+v.replaceAll('%','%25').replaceAll('\r','%0D').replaceAll('\n','%0A'));
           }
-          mask(JSON.parse(process.env.J12_FIXTURES));
+          try { mask(JSON.parse(process.env.J12_FIXTURES)); } catch { throw Error("Invalid J12 fixture configuration"); }
           const uri=new URL(process.env.DAXENVO_AI_DATABASE_URL);
           mask(uri.password);mask(decodeURIComponent(uri.password));mask(uri.href);
           mask(process.env.SUPABASE_PUBLISHABLE_KEY);
