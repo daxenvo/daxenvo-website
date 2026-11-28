@@ -1,0 +1,29 @@
+name: J12 direct IPv6 network diagnostic
+on:
+  push:
+    branches: [feature/j12-ai-integration]
+    paths: ['.github/workflows/j12-direct-ipv6-network.yml']
+permissions: {}
+jobs:
+  network:
+    if: github.repository == 'daxenvo/daxenvo-website' && github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Check AAAA and TCP without PostgreSQL authentication
+        shell: python
+        run: |
+          import errno, socket, sys
+          host = 'db.mniconjzkvvvwqoxtzwu.supabase.co'
+          try:
+              addresses = socket.getaddrinfo(host, 5432, socket.AF_INET6, socket.SOCK_STREAM)
+          except socket.gaierror as e:
+              sys.exit(f'AAAA_FAILED errno={e.errno}')
+          print(f'AAAA_OK count={len(addresses)}', flush=True)
+          with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as s:
+              s.settimeout(6)
+              try:
+                  s.connect(addresses[0][4])
+              except OSError as e:
+                  sys.exit('TCP_FAILED ' + errno.errorcode.get(e.errno, type(e).__name__))
+          print('TCP_OK')
